@@ -19,7 +19,7 @@ import music_assistant.providers.sendspin.provider as provider_module
 from music_assistant.controllers.webserver.helpers.auth_middleware import set_current_user
 from music_assistant.providers.sendspin.player import SendspinBasePlayer
 
-from .test_pin_session import _FakeServerApi, _make_provider
+from .test_pairing_code_session import _FakeServerApi, _make_provider
 
 if TYPE_CHECKING:
     from aiosendspin.server.client import SendspinClient
@@ -56,7 +56,7 @@ class _WebPlayerServerApi(_FakeServerApi):
     def __init__(
         self, *, connected: bool = True, paired: bool = False, record_owner: str | None = None
     ) -> None:
-        super().__init__([], await_pin=False, connected=connected)
+        super().__init__([], await_pairing_code=False, connected=connected)
         self.pairing_store = _FakePairingStore(paired=paired, record_owner=record_owner)
 
 
