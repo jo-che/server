@@ -315,8 +315,9 @@ class MediaControllerBase[ItemCls: "MediaItemType"](metaclass=ABCMeta):
         # batch the many writes of an item update into a single commit
         async with self.mass.music.database.deferred_commit():
             await self._update_library_item(item_id, update, overwrite=overwrite)
-        # return the updated object
-        library_item = await self.get_library_item(item_id)
+            # return the updated object
+            library_item = await self.get_library_item(item_id)
+            await self._refresh_playlog_details(library_item)
         if SUPPRESS_MEDIA_ITEM_UPDATES.get():
             # during a sync the update originates from the provider itself,
             # so skip both the event and the write-back to that provider
@@ -2166,6 +2167,36 @@ class MediaControllerBase[ItemCls: "MediaItemType"](metaclass=ABCMeta):
         # fallback to first mapping
         mapping = next(iter(library_item.provider_mappings))
         return (mapping.provider_instance, mapping.item_id)
+
+    async def _refresh_playlog_details(self, library_item: ItemCls) -> None:
+        """
+        Bring the name and artwork the playlog captured for an item up to date.
+
+        :param library_item: The library item as it now stands.
+        """
+        values = {
+            "name": library_item.name,
+            "image": serialize_to_json(image.to_dict()) if (image := library_item.image) else None,
+        }
+        # a play is logged under the identity the caller referenced, so the same item can
+        # hold a row under its library id and one per provider it came from
+        identities = [
+            ("library", library_item.item_id),
+            *(
+                (mapping.provider_instance, mapping.item_id)
+                for mapping in library_item.provider_mappings
+            ),
+        ]
+        for provider, item_id in identities:
+            await self.mass.music.database.update(
+                DB_TABLE_PLAYLOG,
+                {
+                    "media_type": self.media_type.value,
+                    "item_id": item_id,
+                    "provider": provider,
+                },
+                values,
+            )
 
     async def _remove_provider_images(self, db_id: int, provider_instance_id: str) -> bool:
         """
