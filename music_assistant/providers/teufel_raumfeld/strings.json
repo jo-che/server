@@ -1,0 +1,12 @@
+{
+  "config_entries": {
+    "host": {
+      "label": "Host",
+      "description": "The hostname or IP address of a Raumfeld host webservice (any room's speaker will do, e.g. '192.168.1.50')."
+    },
+    "port": {
+      "label": "Port",
+      "description": "The port of the Raumfeld host webservice. Leave at the default unless you know it was changed."
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "type": "player",
+  "domain": "teufel_raumfeld",
+  "stage": "alpha",
+  "name": "Teufel Raumfeld",
+  "description": "Control Teufel Raumfeld multiroom speakers, with native zone grouping and independent per-room volume.",
+  "codeowners": ["@music-assistant"],
+  "credits": [
+    "[Asyncio UPnP Client library by Steven Looman](https://github.com/StevenLooman/async_upnp_client)"
+  ],
+  "requirements": ["async-upnp-client==0.48.0", "defusedxml==0.7.1"],
+  "documentation": "https://music-assistant.io/player-support/teufel-raumfeld/",
+  "icon": "speaker-multiple",
+  "multi_instance": true,
+  "builtin": false
+}

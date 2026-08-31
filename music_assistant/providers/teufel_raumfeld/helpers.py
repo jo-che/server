@@ -1,0 +1,116 @@
+"""Helpers for UPnP eventing and the vendor per-room-volume action."""
+
+from __future__ import annotations
+
+import xml.etree.ElementTree as ET
+from typing import TYPE_CHECKING
+
+from aiohttp.web import Request, Response
+from async_upnp_client.const import HttpRequest
+from async_upnp_client.event_handler import UpnpEventHandler, UpnpNotifyServer
+
+from .const import (
+    ACTION_GET_ROOM_MUTE,
+    ACTION_GET_ROOM_VOLUME,
+    ACTION_SET_ROOM_MUTE,
+    ACTION_SET_ROOM_VOLUME,
+    SERVICE_RENDERING_CONTROL,
+)
+
+if TYPE_CHECKING:
+    from async_upnp_client.client import UpnpDevice, UpnpRequester
+
+    from music_assistant import MusicAssistant
+
+
+class RaumfeldNotifyServer(UpnpNotifyServer):  # type: ignore[misc,unused-ignore]
+    """Notify server for async_upnp_client which uses the MA webserver."""
+
+    def __init__(self, requester: UpnpRequester, mass: MusicAssistant) -> None:
+        """
+        Initialize the notify server and register it on MA's shared webserver.
+
+        :param requester: async_upnp_client requester used for the event subscriptions.
+        :param mass: The Music Assistant instance to register the NOTIFY route on.
+        """
+        self.mass = mass
+        self.event_handler = UpnpEventHandler(self, requester)
+        self.mass.streams.register_dynamic_route(
+            "/teufel_raumfeld_notify", self._handle_request, method="NOTIFY"
+        )
+
+    @property
+    def callback_url(self) -> str:
+        """Return callback URL on which we are callable."""
+        return f"{self.mass.streams.base_url}/teufel_raumfeld_notify"
+
+    async def _handle_request(self, request: Request) -> Response:
+        """Handle incoming NOTIFY requests from a subscribed device."""
+        if request.method != "NOTIFY":
+            return Response(status=405)
+        body = (await request.read()).decode("utf-8", errors="replace")
+        http_request = HttpRequest(
+            method=request.method, url=str(request.url), headers=request.headers, body=body
+        )
+        try:
+            status = await self.event_handler.handle_notify(http_request)
+        except ET.ParseError as err:
+            self.mass.logger.debug(
+                "Ignoring malformed XML in Raumfeld notify from %s: %s", request.remote, err
+            )
+            return Response(status=400)
+        return Response(status=status)
+
+
+async def get_room_volume(device: UpnpDevice, room_udn: str) -> int | None:
+    """
+    Read the current volume of a single room synced into the given zone device.
+
+    :param device: The UPnP device of the room's currently addressable zone.
+    :param room_udn: UDN of the room to read the volume for.
+    """
+    service = device.service(SERVICE_RENDERING_CONTROL)
+    action = service.action(ACTION_GET_ROOM_VOLUME)
+    result = await action.async_call(InstanceID=0, Room=room_udn)
+    volume = result.get("CurrentVolume")
+    return int(volume) if volume is not None else None
+
+
+async def set_room_volume(device: UpnpDevice, room_udn: str, volume: int) -> None:
+    """
+    Set the volume of a single room synced into the given zone device.
+
+    :param device: The UPnP device of the room's currently addressable zone.
+    :param room_udn: UDN of the room to set the volume for.
+    :param volume: Desired volume level (0-100).
+    """
+    service = device.service(SERVICE_RENDERING_CONTROL)
+    action = service.action(ACTION_SET_ROOM_VOLUME)
+    await action.async_call(InstanceID=0, Room=room_udn, DesiredVolume=volume)
+
+
+async def get_room_mute(device: UpnpDevice, room_udn: str) -> bool | None:
+    """
+    Read the current mute state of a single room synced into the given zone device.
+
+    :param device: The UPnP device of the room's currently addressable zone.
+    :param room_udn: UDN of the room to read the mute state for.
+    """
+    service = device.service(SERVICE_RENDERING_CONTROL)
+    action = service.action(ACTION_GET_ROOM_MUTE)
+    result = await action.async_call(InstanceID=0, Room=room_udn)
+    muted = result.get("CurrentMute")
+    return bool(muted) if muted is not None else None
+
+
+async def set_room_mute(device: UpnpDevice, room_udn: str, muted: bool) -> None:
+    """
+    Set the mute state of a single room synced into the given zone device.
+
+    :param device: The UPnP device of the room's currently addressable zone.
+    :param room_udn: UDN of the room to set the mute state for.
+    :param muted: Desired mute state.
+    """
+    service = device.service(SERVICE_RENDERING_CONTROL)
+    action = service.action(ACTION_SET_ROOM_MUTE)
+    await action.async_call(InstanceID=0, Room=room_udn, DesiredMute=muted)
