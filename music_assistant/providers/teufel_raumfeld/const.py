@@ -6,6 +6,7 @@ DOMAIN = "teufel_raumfeld"
 
 CONF_HOST = "host"
 CONF_PORT = "port"
+CONF_REPLACE_PAUSE_WITH_STOP = "replace_pause_with_stop"
 
 DEVICE_MANUFACTURER = "Lautsprecher Teufel GmbH"
 

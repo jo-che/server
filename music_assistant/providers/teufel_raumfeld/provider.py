@@ -41,6 +41,18 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
     _players: dict[str, TeufelRaumfeldPlayer]
     _watch_tasks: list[asyncio.Task[None]]
     _reconcile_lock: asyncio.Lock
+    # Zone UDNs known to be real, audible speaker groups rather than a room's
+    # discouraged default "virtual media renderer" (see
+    # TeufelRaumfeldPlayer._ensure_real_solo_zone) - there is no protocol-level way to
+    # tell the two apart from the topology alone, so this is built from every zone this
+    # provider has ever observed with more than one room in it (formed by us or by
+    # another controller, e.g. the Raumfeld app) plus every zone this provider has
+    # itself explicitly (re)created. Entries are not removed except via `forget_zone`
+    # (a failed connection proving the zone is actually dead): a zone that shrinks back
+    # to one room after a member leaves is still the same real zone, and must not be
+    # reactively destroyed and recreated by _reconcile - that stops whatever was still
+    # playing on it for no reason.
+    _confirmed_zones: set[str]
 
     async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
         """
@@ -56,6 +68,7 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
         self._players = {}
         self._watch_tasks = []
         self._reconcile_lock = asyncio.Lock()
+        self._confirmed_zones = set()
         host = cast("str", self.get_setup_value(CONF_HOST))
         port = cast("int", self.get_setup_value(CONF_PORT))
         self.client = RaumfeldWebserviceClient(host, port, self.mass.http_session)
@@ -105,6 +118,7 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
         self,
         rooms_to_drop: list[str],
         rooms_to_group: list[str],
+        target_zone_udn: str | None = None,
         prefer_leader: str | None = None,
     ) -> None:
         """
@@ -119,6 +133,12 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
         :param rooms_to_drop: UDNs of rooms to drop from whatever zone each is in.
         :param rooms_to_group: UDNs of rooms that should end up combined into one zone
             together; only issued to the webservice if there is more than one.
+        :param target_zone_udn: UDN of an existing zone to add `rooms_to_group` to,
+            instead of forming a brand new zone. Pass the current (sync leader) room's
+            own zone UDN when joining a room to an already-playing zone: the webservice
+            call is destructive without this (it always creates a fresh zone UDN and
+            tears down whatever renderer instance was there before), which otherwise
+            silently stops playback on everyone already in that zone.
         :param prefer_leader: UDN of the room that should become the MA sync leader of
             whatever zone it ends up in, if any (see `_pick_leader`). Pass this from a
             command that just changed grouping to make the room the command was issued
@@ -128,8 +148,27 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
             for room_udn in rooms_to_drop:
                 await self.client.drop_room(room_udn)
             if len(rooms_to_group) > 1:
-                await self.client.connect_rooms_to_zone(rooms_to_group)
+                await self.client.connect_rooms_to_zone(rooms_to_group, zone_udn=target_zone_udn)
             await self._settle_and_reconcile(prefer_leader=prefer_leader)
+
+    def is_zone_confirmed(self, zone_udn: str) -> bool:
+        """Return whether `zone_udn` is known to be a real, audible speaker group."""
+        return zone_udn in self._confirmed_zones
+
+    def confirm_zone(self, zone_udn: str) -> None:
+        """Mark `zone_udn` as a real, audible speaker group (see `_confirmed_zones`)."""
+        self._confirmed_zones.add(zone_udn)
+
+    def forget_zone(self, zone_udn: str) -> None:
+        """
+        Un-confirm `zone_udn` after a failed connection proves it is actually dead.
+
+        The one exception to `_confirmed_zones` entries never being removed: a zone a
+        room could not actually connect to is not a real, currently-usable endpoint
+        regardless of what the topology still says, so the next playback attempt should
+        try to create a fresh one instead of reactively retrying the same dead zone.
+        """
+        self._confirmed_zones.discard(zone_udn)
 
     async def get_diagnostics(self) -> dict[str, SerializableType]:
         """Return diagnostics info for this provider to include in diagnostics reports."""
@@ -189,6 +228,9 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
         :param prefer_leader: See `group_rooms`.
         """
         await self.discover_players()
+        for zone_udn, known_zone in self.topology.zones.items():
+            if len(known_zone.room_udns) > 1:
+                self._confirmed_zones.add(zone_udn)
         for room_udn, player in list(self._players.items()):
             room = self.topology.rooms.get(room_udn)
             if room is None:
