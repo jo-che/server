@@ -178,6 +178,7 @@ async def test_get_item_passes_sound_effect_type_to_builtin_provider() -> None:
     builtin_provider.domain = "builtin"
     builtin_provider.parse_item = AsyncMock(return_value=sound_effect)
     controller.mass = MagicMock()
+    controller.mass.resolve_provider_reference.side_effect = lambda reference: reference
     controller.mass.get_provider.side_effect = lambda provider_id: (
         builtin_provider if provider_id in {"builtin", "builtin_1"} else None
     )
@@ -209,6 +210,7 @@ async def test_get_item_builtin_radio_keeps_user_supplied_details() -> None:
     builtin_provider.parse_item = AsyncMock()
     builtin_provider.get_radio = AsyncMock(return_value=radio)
     controller.mass = MagicMock()
+    controller.mass.resolve_provider_reference.side_effect = lambda reference: reference
     controller.mass.get_provider.side_effect = lambda provider_id: (
         builtin_provider if provider_id in {"builtin", "builtin_1"} else None
     )
@@ -238,6 +240,7 @@ async def test_get_item_builtin_track_keeps_user_supplied_details() -> None:
     builtin_provider.parse_item = AsyncMock()
     builtin_provider.get_track = AsyncMock(return_value=track)
     controller.mass = MagicMock()
+    controller.mass.resolve_provider_reference.side_effect = lambda reference: reference
     controller.mass.get_provider.side_effect = lambda provider_id: (
         builtin_provider if provider_id in {"builtin", "builtin_1"} else None
     )
@@ -267,6 +270,7 @@ async def test_get_item_builtin_unknown_type_still_parses_url() -> None:
     builtin_provider.parse_item = AsyncMock(return_value=radio)
     builtin_provider.get_radio = AsyncMock()
     controller.mass = MagicMock()
+    controller.mass.resolve_provider_reference.side_effect = lambda reference: reference
     controller.mass.get_provider.side_effect = lambda provider_id: (
         builtin_provider if provider_id in {"builtin", "builtin_1"} else None
     )
@@ -295,6 +299,7 @@ async def test_get_item_builtin_playlist_instance_uses_playlist_controller() -> 
     playlist_item = MagicMock()
     playlist_controller.get = AsyncMock(return_value=playlist_item)
     controller.mass = MagicMock()
+    controller.mass.resolve_provider_reference.side_effect = lambda reference: reference
     controller.mass.get_provider.side_effect = lambda provider_id: (
         builtin_provider if provider_id in {"builtin", "builtin_1"} else None
     )

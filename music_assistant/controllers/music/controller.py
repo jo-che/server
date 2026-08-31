@@ -1124,6 +1124,9 @@ class MusicController(MusicDatabaseSetupMixin, CoreController):
         if provider_instance_id_or_domain == "database":
             # backwards compatibility - to remove when 2.0 stable is released
             provider_instance_id_or_domain = "library"
+        provider_instance_id_or_domain = self.mass.resolve_provider_reference(
+            provider_instance_id_or_domain
+        )
         provider = self.mass.get_provider(provider_instance_id_or_domain)
         if media_type in (
             MediaType.TRACK,

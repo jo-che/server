@@ -1102,3 +1102,6 @@ EXTERNAL_SOURCES: Final[set[str]] = {
 }
 
 COLLECTION_ITEM_ID_SEPARATOR = "___"
+
+# splits the provider domain from the unique suffix in an instance id, e.g. "spotify--aBcDeFgH"
+PROVIDER_INSTANCE_ID_SEPARATOR = "--"

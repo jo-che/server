@@ -50,6 +50,7 @@ from music_assistant.constants import (
     DEFAULT_PROVIDERS,
     MASS_LOGGER_NAME,
     MIN_SCHEMA_VERSION,
+    PROVIDER_INSTANCE_ID_SEPARATOR,
     VERBOSE_LOG_LEVEL,
 )
 from music_assistant.controllers.cache import CacheController
@@ -592,6 +593,28 @@ class MusicAssistant:
             if return_unavailable or prov.available:
                 return prov
         return None
+
+    def resolve_provider_reference(self, provider_instance_or_domain: str) -> str:
+        """
+        Return a provider reference that can still be looked up.
+
+        An instance id of a streaming provider that is no longer configured resolves to
+        the provider domain. Any other reference is returned unchanged.
+
+        :param provider_instance_or_domain: Instance ID or domain of the provider.
+        """
+        if provider_instance_or_domain in self._providers:
+            return provider_instance_or_domain
+        domain = provider_instance_or_domain.split(PROVIDER_INSTANCE_ID_SEPARATOR, 1)[0]
+        if domain == provider_instance_or_domain:
+            return provider_instance_or_domain
+        prov = self.get_provider(domain)
+        # a streaming provider issues the same item ids to every account, so another
+        # instance still resolves the item. item ids of a local provider do not carry
+        # across instances, so an outdated reference to one stays unresolved
+        if prov is not None and getattr(prov, "is_streaming_provider", False):
+            return domain
+        return provider_instance_or_domain
 
     def get_provider_ready_event(self, domain: str) -> asyncio.Event:
         """Get (or create) an asyncio.Event that is set when a provider of the given domain is loaded."""
