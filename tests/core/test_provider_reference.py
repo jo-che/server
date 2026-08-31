@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
@@ -104,6 +105,36 @@ async def test_deleted_instance_resolves_to_domain(mass_minimal: MusicAssistant)
     mass_minimal._providers[NEW_INSTANCE] = _mock_provider(NEW_INSTANCE, FAKE_DOMAIN, True)
 
     assert mass_minimal.resolve_provider_reference(OLD_INSTANCE) == FAKE_DOMAIN
+
+
+async def test_the_redirect_is_reported_once(
+    mass_minimal: MusicAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The redirect is visible in the log, without repeating on every lookup."""
+    mass_minimal._providers[NEW_INSTANCE] = _mock_provider(NEW_INSTANCE, FAKE_DOMAIN, True)
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            mass_minimal.resolve_provider_reference(OLD_INSTANCE)
+
+    warnings = [record for record in caplog.records if OLD_INSTANCE in record.getMessage()]
+    assert len(warnings) == 1
+    assert NEW_INSTANCE in warnings[0].getMessage()
+
+
+async def test_an_unchanged_reference_is_not_reported(
+    mass_minimal: MusicAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Nothing is reported when the reference is handed back as it came in."""
+    mass_minimal._providers["filesystem_local--new"] = _mock_provider(
+        "filesystem_local--new", "filesystem_local", False
+    )
+
+    with caplog.at_level(logging.WARNING):
+        mass_minimal.resolve_provider_reference("filesystem_local--old")
+        mass_minimal.resolve_provider_reference(NEW_INSTANCE)
+
+    assert caplog.records == []
 
 
 async def test_deleted_instance_of_local_provider_is_kept(mass_minimal: MusicAssistant) -> None:

@@ -242,6 +242,9 @@ class MusicAssistant:
         self._tracked_tasks: dict[str, asyncio.Task[Any]] = {}
         self._tracked_timers: dict[str, asyncio.TimerHandle] = {}
         self._provider_ready_events: dict[str, asyncio.Event] = {}
+        # stale provider references already warned about, so a client that retries
+        # one on every page load does not fill the log with the same line
+        self._warned_provider_references: set[str] = set()
         self.running_as_hass_addon: bool = False
         self.version: str = "0.0.0"
         self.logger = LOGGER
@@ -613,6 +616,14 @@ class MusicAssistant:
         # instance still resolves the item. item ids of a local provider do not carry
         # across instances, so an outdated reference to one stays unresolved
         if prov is not None and getattr(prov, "is_streaming_provider", False):
+            if provider_instance_or_domain not in self._warned_provider_references:
+                self._warned_provider_references.add(provider_instance_or_domain)
+                LOGGER.warning(
+                    "Provider instance %s is not loaded, so its items are resolved against %s. "
+                    "With more than one account for this provider that may be the wrong one",
+                    provider_instance_or_domain,
+                    prov.instance_id,
+                )
             return domain
         return provider_instance_or_domain
 
