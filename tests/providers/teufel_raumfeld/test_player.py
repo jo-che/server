@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import aiohttp
 import pytest
 from aiohttp import web
-from music_assistant_models.enums import PlayerFeature
+from music_assistant_models.enums import IdentifierType, PlayerFeature
 
 from music_assistant.providers.teufel_raumfeld.helpers import get_device_model
 from music_assistant.providers.teufel_raumfeld.player import TeufelRaumfeldPlayer
@@ -47,14 +47,19 @@ def _player(model: str | None = None) -> TeufelRaumfeldPlayer:
     return TeufelRaumfeldPlayer(provider, ROOM_UDN, "Workshop")  # type: ignore[arg-type]
 
 
-def _room(power_state: str | None) -> RaumfeldRoom:
+def _room(power_state: str | None, zone_udn: str | None = None) -> RaumfeldRoom:
     """
     Return the topology entry of the room, with the given power state.
 
     :param power_state: The room's powerState, or None when the host reports none.
+    :param zone_udn: UDN of the zone the room is currently part of, if any.
     """
     return RaumfeldRoom(
-        udn=ROOM_UDN, name="Werkstatt", renderer_udn=RENDERER_UDN, power_state=power_state
+        udn=ROOM_UDN,
+        name="Werkstatt",
+        renderer_udn=RENDERER_UDN,
+        power_state=power_state,
+        zone_udn=zone_udn,
     )
 
 
@@ -106,6 +111,17 @@ async def test_unreadable_model_keeps_the_previous_one() -> None:
     await player.update_room_info(_room("ACTIVE"), RaumfeldTopology())
 
     assert player.device_info.model == "Raumfeld One M"
+
+
+async def test_uuid_is_the_physical_renderer_regardless_of_zone() -> None:
+    """The UUID is the speaker's own renderer UDN, the one DLNA discovery reports."""
+    player = _player()
+
+    await player.update_room_info(_room("ACTIVE", zone_udn="uuid:Zone-A"), RaumfeldTopology())
+    assert player.device_info.identifiers[IdentifierType.UUID] == "Renderer-Workshop"
+
+    await player.update_room_info(_room("ACTIVE", zone_udn="uuid:Zone-B"), RaumfeldTopology())
+    assert player.device_info.identifiers[IdentifierType.UUID] == "Renderer-Workshop"
 
 
 @pytest.fixture
