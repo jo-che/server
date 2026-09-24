@@ -5,9 +5,12 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING
 
+import aiohttp
+import defusedxml.ElementTree as DefusedET
 from aiohttp.web import Request, Response
 from async_upnp_client.const import HttpRequest
 from async_upnp_client.event_handler import UpnpEventHandler, UpnpNotifyServer
+from defusedxml import DefusedXmlException
 
 from .const import (
     ACTION_GET_ROOM_MUTE,
@@ -15,7 +18,10 @@ from .const import (
     ACTION_SET_ROOM_MUTE,
     ACTION_SET_ROOM_VOLUME,
     SERVICE_RENDERING_CONTROL,
+    UPNP_DEVICE_NAMESPACE,
 )
+
+_DESCRIPTION_TIMEOUT = 5
 
 if TYPE_CHECKING:
     from async_upnp_client.client import UpnpDevice, UpnpRequester
@@ -114,3 +120,27 @@ async def set_room_mute(device: UpnpDevice, room_udn: str, muted: bool) -> None:
     service = device.service(SERVICE_RENDERING_CONTROL)
     action = service.action(ACTION_SET_ROOM_MUTE)
     await action.async_call(InstanceID=0, Room=room_udn, DesiredMute=muted)
+
+
+async def get_device_model(session: aiohttp.ClientSession, location: str) -> str | None:
+    """
+    Read the hardware model name from a UPnP device description.
+
+    Returns None if the description cannot be fetched or has no model name.
+
+    :param session: aiohttp session to fetch the description with.
+    :param location: URL of the device's UPnP description XML.
+    """
+    try:
+        timeout = aiohttp.ClientTimeout(total=_DESCRIPTION_TIMEOUT)
+        async with session.get(location, timeout=timeout) as resp:
+            if resp.status != 200:
+                return None
+            body = await resp.read()
+        root = DefusedET.fromstring(body)
+    except TimeoutError, aiohttp.ClientError, ET.ParseError, DefusedXmlException:
+        return None
+    model = root.findtext(
+        f"{{{UPNP_DEVICE_NAMESPACE}}}device/{{{UPNP_DEVICE_NAMESPACE}}}modelName", default=""
+    )
+    return model.strip() or None

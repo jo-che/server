@@ -10,6 +10,8 @@ CONF_REPLACE_PAUSE_WITH_STOP = "replace_pause_with_stop"
 
 DEVICE_MANUFACTURER = "Lautsprecher Teufel GmbH"
 
+UPNP_DEVICE_NAMESPACE = "urn:schemas-upnp-org:device-1-0"
+
 # Raumfeld's own power-state strings, as reported per room in the /getZones topology.
 POWER_STATE_ACTIVE = "ACTIVE"
 POWER_STATE_AUTOMATIC_STANDBY = "AUTOMATIC_STANDBY"
