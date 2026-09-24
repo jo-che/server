@@ -76,10 +76,12 @@ class TeufelRaumfeldPlayer(Player):
         self._attr_needs_poll = True
         self._attr_poll_interval = POLL_INTERVAL
         self._attr_can_group_with = {provider.instance_id}
+        # No ENQUEUE (and so no GAPLESS_PLAYBACK): Raumfeld's zone renderers have no
+        # SetNextAVTransportURI action at all (checked against a live system's AVTransport
+        # description), so playback would stop at the end of every track. Without it, MA
+        # plays the queue in flow mode, as one continuous stream it advances itself.
         self._attr_supported_features = {
             PlayerFeature.PLAY_MEDIA,
-            PlayerFeature.ENQUEUE,
-            PlayerFeature.GAPLESS_PLAYBACK,
             PlayerFeature.VOLUME_SET,
             PlayerFeature.VOLUME_MUTE,
             PlayerFeature.PAUSE,
@@ -325,18 +327,6 @@ class TeufelRaumfeldPlayer(Player):
                 await self.device.async_stop()
             await self._apply_transport_uri(media, url)
         self.update_state()
-
-    async def enqueue_next_media(self, media: PlayerMedia) -> None:
-        """Handle enqueuing of the next queue item on the player."""
-        if self.device is None:
-            return
-        url = await self.mass.streams.resolve_stream_url(self.player_id, media)
-        didl_metadata = create_didl_metadata(media, url)
-        title = media.title or media.uri
-        try:
-            await self.device.async_set_next_transport_uri(url, title, didl_metadata)
-        except UpnpError:
-            self.logger.warning("Failed to enqueue next track for player %s", self.display_name)
 
     async def set_members(
         self,
