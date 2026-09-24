@@ -2,11 +2,28 @@
   "config_entries": {
     "host": {
       "label": "Host",
-      "description": "The hostname or IP address of a Raumfeld host webservice (any room's speaker will do, e.g. '192.168.1.50')."
+      "description": "The hostname or IP address of your Raumfeld host: the one speaker that runs the Raumfeld system for all others (e.g. '192.168.1.50'). Filled in automatically when it can be found on the network."
     },
     "port": {
       "label": "Port",
       "description": "The port of the Raumfeld host webservice. Leave at the default unless you know it was changed."
+    },
+    "discovered_host": {
+      "label": "Raumfeld host",
+      "description": "Pick the Raumfeld system to add. Each system needs its own provider instance.",
+      "options": {
+        "manual": "Enter manually"
+      }
+    }
+  },
+  "setup_flow": {
+    "select_host": {
+      "title": "Choose a Raumfeld system",
+      "description": "More than one Raumfeld host was found on your network."
+    },
+    "user": {
+      "title": "Connect to your Raumfeld system",
+      "description": "Enter how to reach your Raumfeld host."
     }
   }
 }
