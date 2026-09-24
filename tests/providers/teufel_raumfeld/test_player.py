@@ -191,3 +191,12 @@ async def test_get_device_model_returns_none_for_unusable_descriptions(
     session, base_url = description_session
 
     assert await get_device_model(session, f"{base_url}{path}") is None
+
+
+def test_queue_plays_in_flow_mode() -> None:
+    """Raumfeld zones cannot enqueue a next track, so MA must stream the queue in flow mode."""
+    player = _player()
+
+    assert PlayerFeature.ENQUEUE not in player.supported_features
+    assert PlayerFeature.GAPLESS_PLAYBACK not in player.supported_features
+    assert player.requires_flow_mode
