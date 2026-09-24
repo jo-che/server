@@ -106,6 +106,7 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
                 continue
             player = TeufelRaumfeldPlayer(self, room_udn, room.name)
             self._players[room_udn] = player
+            player.update_room_info(room)
             await player.connect(self.topology)
             await self.mass.players.register_or_update(player)
 

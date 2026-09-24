@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from music_assistant_models.player import PlayerMedia
 
     from .provider import TeufelRaumfeldPlayerProvider
-    from .raumfeld_client import RaumfeldTopology
+    from .raumfeld_client import RaumfeldRoom, RaumfeldTopology
 
 
 class TeufelRaumfeldPlayer(Player):
@@ -91,7 +91,6 @@ class TeufelRaumfeldPlayer(Player):
             PlayerFeature.SEEK,
             PlayerFeature.NEXT_PREVIOUS,
             PlayerFeature.SET_MEMBERS,
-            PlayerFeature.POWER,
         }
 
     async def connect(self, topology: RaumfeldTopology, *, ensure_real_zone: bool = False) -> None:
@@ -204,13 +203,26 @@ class TeufelRaumfeldPlayer(Player):
         # UPnP renderer" - a standby room is legitimately available with no renderer;
         # see connect()/poll() for how that case is handled without a device.
         self._attr_available = True
-        self._attr_name = room.name
-        self._attr_powered = (
-            room.power_state == POWER_STATE_ACTIVE if room.power_state is not None else None
-        )
+        self.update_room_info(room)
         await self.connect(topology)
         self.force_poll = True
         self.update_state()
+
+    def update_room_info(self, room: RaumfeldRoom) -> None:
+        """
+        Update name and power state from the room's topology entry.
+
+        :param room: This room's current entry in the topology.
+        """
+        self._attr_name = room.name
+        # speakers without a standby mode (e.g. a first-generation One M) have no
+        # powerState in the topology at all - a power button would do nothing for them
+        if room.power_state is None:
+            self._attr_powered = None
+            self._attr_supported_features.discard(PlayerFeature.POWER)
+        else:
+            self._attr_powered = room.power_state == POWER_STATE_ACTIVE
+            self._attr_supported_features.add(PlayerFeature.POWER)
 
     async def on_unload(self) -> None:
         """Handle logic when the player is unloaded from the Player controller."""
