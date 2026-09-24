@@ -4,7 +4,7 @@
   "stage": "alpha",
   "name": "Teufel Raumfeld",
   "description": "Control Teufel Raumfeld multiroom speakers, with native zone grouping and independent per-room volume.",
-  "codeowners": ["@music-assistant"],
+  "codeowners": ["@jo-che"],
   "credits": [
     "[Asyncio UPnP Client library by Steven Looman](https://github.com/StevenLooman/async_upnp_client)"
   ],
