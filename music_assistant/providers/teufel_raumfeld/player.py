@@ -12,9 +12,7 @@ from urllib.parse import urlparse
 
 from async_upnp_client.exceptions import UpnpError, UpnpResponseError
 from async_upnp_client.profiles.dlna import DmrDevice, TransportState
-from music_assistant_models.config_entries import ConfigEntry
 from music_assistant_models.enums import (
-    ConfigEntryType,
     IdentifierType,
     PlaybackState,
     PlayerFeature,
@@ -26,7 +24,6 @@ from music_assistant.helpers.upnp import create_didl_metadata
 from music_assistant.models.player import DeviceInfo, Player
 
 from .const import (
-    CONF_REPLACE_PAUSE_WITH_STOP,
     DEVICE_MANUFACTURER,
     POLL_INTERVAL,
     POWER_STATE_ACTIVE,
@@ -234,27 +231,6 @@ class TeufelRaumfeldPlayer(Player):
         await super().on_unload()
         await self._disconnect_device()
 
-    async def get_config_entries(self) -> list[ConfigEntry]:
-        """Return all (provider/player specific) Config Entries for the player."""
-        return [
-            # Raumfeld's native UPnP Pause drops the HTTP connection to MA's stream
-            # server; its Play then opens a *new* connection to the same (session-
-            # scoped, single-use) URL, which MA's streams server correctly refuses -
-            # confirmed live via the device's own reported transport error ("Could not
-            # open HTTP stream: Unknown (or invalid) session"). Replacing pause with
-            # stop routes resume through MA's queue-level resume instead (which starts
-            # a fresh, valid session at the right position) rather than a bare native
-            # Play retrying the now-dead one. Not a choice to leave to the user: native
-            # pause looks like it works (it does pause) right up until resume silently
-            # restarts from the beginning.
-            ConfigEntry(
-                key=CONF_REPLACE_PAUSE_WITH_STOP,
-                type=ConfigEntryType.BOOLEAN,
-                default_value=True,
-                hidden=True,
-            ),
-        ]
-
     # COMMANDS
 
     async def power(self, powered: bool) -> None:
@@ -298,17 +274,16 @@ class TeufelRaumfeldPlayer(Player):
 
     async def pause(self) -> None:
         """Send PAUSE command to the player."""
-        if self.device is None:
-            return
-        # see get_config_entries() for why this defaults to (effectively always) True
-        replace_pause_with_stop = self.get_config_value(
-            CONF_REPLACE_PAUSE_WITH_STOP, return_type=bool
-        )
-        if replace_pause_with_stop and self.device.can_stop:
-            await self.stop()
-            return
-        if self.device.can_pause:
-            await self.device.async_pause()
+        # Raumfeld's native UPnP Pause drops the HTTP connection to MA's stream
+        # server; its Play then opens a *new* connection to the same (session-
+        # scoped, single-use) URL, which MA's streams server correctly refuses -
+        # confirmed live via the device's own reported transport error ("Could not
+        # open HTTP stream: Unknown (or invalid) session"). Stopping instead routes
+        # resume through MA's queue-level resume (which starts a fresh, valid session
+        # at the right position) rather than a bare native Play retrying the now-dead
+        # one. Not a choice to leave to the user: native pause looks like it works (it
+        # does pause) right up until resume silently restarts from the beginning.
+        await self.stop()
 
     async def seek(self, position: int) -> None:
         """Send SEEK command to the player."""
