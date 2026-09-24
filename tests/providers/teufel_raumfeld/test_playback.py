@@ -191,30 +191,17 @@ async def test_real_solo_zone_leaves_real_zones_alone(
     assert udn == ZONE_A
 
 
-async def test_pause_stops_by_default() -> None:
-    """Pause is replaced with stop, so resuming starts a fresh stream session."""
+async def test_pause_stops_instead_of_pausing() -> None:
+    """Pause stops the renderer, so resuming starts a fresh stream session."""
     player = _player()
     player.device = _dmr_device()
     player._last_play_media = MagicMock()
-    player.get_config_value = MagicMock(return_value=True)  # type: ignore[method-assign]
 
     await player.pause()
 
     player.device.async_stop.assert_awaited_once()
     player.device.async_pause.assert_not_awaited()
     assert player._last_play_media is None
-
-
-async def test_pause_uses_native_pause_when_not_replaced() -> None:
-    """With the replacement turned off, the renderer's own pause is used."""
-    player = _player()
-    player.device = _dmr_device()
-    player.get_config_value = MagicMock(return_value=False)  # type: ignore[method-assign]
-
-    await player.pause()
-
-    player.device.async_pause.assert_awaited_once()
-    player.device.async_stop.assert_not_awaited()
 
 
 async def test_set_members_extends_the_rooms_current_zone() -> None:
