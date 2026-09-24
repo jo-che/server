@@ -12,6 +12,7 @@ from music_assistant_models.enums import IdentifierType, PlayerFeature
 from music_assistant.providers.teufel_raumfeld.helpers import get_device_model
 from music_assistant.providers.teufel_raumfeld.player import TeufelRaumfeldPlayer
 from music_assistant.providers.teufel_raumfeld.raumfeld_client import (
+    RaumfeldDevice,
     RaumfeldRoom,
     RaumfeldTopology,
 )
@@ -122,6 +123,34 @@ async def test_uuid_is_the_physical_renderer_regardless_of_zone() -> None:
 
     await player.update_room_info(_room("ACTIVE", zone_udn="uuid:Zone-B"), RaumfeldTopology())
     assert player.device_info.identifiers[IdentifierType.UUID] == "Renderer-Workshop"
+
+
+async def test_ip_is_the_physical_renderers_address() -> None:
+    """The IP is the speaker's own address, so MA can resolve the MAC other protocols share."""
+    player = _player()
+    topology = RaumfeldTopology(
+        devices={
+            RENDERER_UDN: RaumfeldDevice(
+                udn=RENDERER_UDN,
+                location="http://10.0.0.79:54371/Renderer-Workshop.xml",
+                device_type="urn:schemas-upnp-org:device:MediaRenderer:1",
+            )
+        }
+    )
+
+    await player.update_room_info(_room("ACTIVE"), topology)
+
+    assert player.device_info.ip_address == "10.0.0.79"
+
+
+async def test_unknown_renderer_location_keeps_the_previous_ip() -> None:
+    """A topology that momentarily lacks the renderer does not drop a known IP."""
+    player = _player()
+    player._attr_device_info.ip_address = "10.0.0.79"
+
+    await player.update_room_info(_room("ACTIVE"), RaumfeldTopology())
+
+    assert player.device_info.ip_address == "10.0.0.79"
 
 
 @pytest.fixture
