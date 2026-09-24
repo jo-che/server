@@ -14,7 +14,7 @@ from music_assistant.helpers.json import SerializableType
 from music_assistant.models.player_provider import PlayerProvider
 
 from .const import CONF_HOST, CONF_PORT
-from .helpers import RaumfeldNotifyServer
+from .helpers import RaumfeldNotifyServer, get_device_model
 from .player import TeufelRaumfeldPlayer
 from .raumfeld_client import RaumfeldTopology, RaumfeldWebserviceClient
 
@@ -53,6 +53,9 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
     # reactively destroyed and recreated by _reconcile - that stops whatever was still
     # playing on it for no reason.
     _confirmed_zones: set[str]
+    # hardware model names keyed by physical renderer UDN - they never change, so each
+    # description is fetched only once (see `get_device_model`)
+    _device_models: dict[str, str]
 
     async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
         """
@@ -69,6 +72,7 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
         self._watch_tasks = []
         self._reconcile_lock = asyncio.Lock()
         self._confirmed_zones = set()
+        self._device_models = {}
         host = cast("str", self.get_setup_value(CONF_HOST))
         port = cast("int", self.get_setup_value(CONF_PORT))
         self.client = RaumfeldWebserviceClient(host, port, self.mass.http_session)
@@ -106,7 +110,7 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
                 continue
             player = TeufelRaumfeldPlayer(self, room_udn, room.name)
             self._players[room_udn] = player
-            player.update_room_info(room)
+            await player.update_room_info(room, self.topology)
             await player.connect(self.topology)
             await self.mass.players.register_or_update(player)
 
@@ -171,6 +175,21 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
         """
         self._confirmed_zones.discard(zone_udn)
 
+    async def get_device_model(self, renderer_udn: str, topology: RaumfeldTopology) -> str | None:
+        """
+        Return the hardware model name of a room's physical renderer, if it can be read.
+
+        :param renderer_udn: UDN of the room's physical renderer (not its zone renderer).
+        :param topology: The topology snapshot to resolve the renderer's location from.
+        """
+        if model := self._device_models.get(renderer_udn):
+            return model
+        if not (location := topology.location_for(renderer_udn)):
+            return None
+        if model := await get_device_model(self.mass.http_session, location):
+            self._device_models[renderer_udn] = model
+        return model
+
     async def get_diagnostics(self) -> dict[str, SerializableType]:
         """Return diagnostics info for this provider to include in diagnostics reports."""
         return {
@@ -181,6 +200,7 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
                 for udn, room in self.topology.rooms.items()
             },
             "zones": {udn: zone.room_udns for udn, zone in self.topology.zones.items()},
+            "models": dict(self._device_models),
         }
 
     async def _watch_topology(self, path: str) -> None:

@@ -203,16 +203,17 @@ class TeufelRaumfeldPlayer(Player):
         # UPnP renderer" - a standby room is legitimately available with no renderer;
         # see connect()/poll() for how that case is handled without a device.
         self._attr_available = True
-        self.update_room_info(room)
+        await self.update_room_info(room, topology)
         await self.connect(topology)
         self.force_poll = True
         self.update_state()
 
-    def update_room_info(self, room: RaumfeldRoom) -> None:
+    async def update_room_info(self, room: RaumfeldRoom, topology: RaumfeldTopology) -> None:
         """
-        Update name and power state from the room's topology entry.
+        Update name, power state and hardware model from the room's topology entry.
 
         :param room: This room's current entry in the topology.
+        :param topology: The topology snapshot `room` was taken from.
         """
         self._attr_name = room.name
         # speakers without a standby mode (e.g. a first-generation One M) have no
@@ -223,6 +224,8 @@ class TeufelRaumfeldPlayer(Player):
         else:
             self._attr_powered = room.power_state == POWER_STATE_ACTIVE
             self._attr_supported_features.add(PlayerFeature.POWER)
+        if model := await self._prov.get_device_model(room.renderer_udn, topology):
+            self._attr_device_info.model = model
 
     async def on_unload(self) -> None:
         """Handle logic when the player is unloaded from the Player controller."""
