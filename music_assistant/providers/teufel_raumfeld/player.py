@@ -74,9 +74,6 @@ class TeufelRaumfeldPlayer(Player):
         self.force_poll = False
         self.last_seen = time.time()
         self._attr_name = name
-        # the UUID identifier is set (and kept current) by connect() instead of here -
-        # see the comment there for why it must track the room's currently addressed
-        # zone/renderer UDN rather than the room's own stable UDN
         self._attr_device_info = DeviceInfo(model="Raumfeld", manufacturer=DEVICE_MANUFACTURER)
         self._attr_needs_poll = True
         self._attr_poll_interval = POLL_INTERVAL
@@ -165,16 +162,6 @@ class TeufelRaumfeldPlayer(Player):
                 return
             self.device = DmrDevice(upnp_device, self._prov.notify_server.event_handler)
             self._current_location = location
-            # Kept in sync with the room's *currently addressed* zone/renderer UDN
-            # (not the room's own stable UDN, used as player_id): this is what a
-            # generic DLNA-discovered player for the same physical renderer reports as
-            # its own UUID identifier, so MA's protocol-linking can recognize the two
-            # as the same device and hide/link the DLNA one instead of leaving both to
-            # independently subscribe to (and corrupt each other's view of) it. The zone
-            # UDN changes as rooms group/ungroup, hence updating it here on every connect.
-            self._attr_device_info.add_identifier(
-                IdentifierType.UUID, addressable_udn.removeprefix("uuid:")
-            )
             self.device.on_event = self._handle_event
             try:
                 await self.device.async_subscribe_services(auto_resubscribe=True)
@@ -226,6 +213,15 @@ class TeufelRaumfeldPlayer(Player):
             self._attr_supported_features.add(PlayerFeature.POWER)
         if model := await self._prov.get_device_model(room.renderer_udn, topology):
             self._attr_device_info.model = model
+        # The room's physical speaker renderer, not the zone renderer this player
+        # controls: speakers answer SSDP discovery for their own renderer only (the
+        # host's zone renderers were never seen answering it, checked on a live system),
+        # so this is the UDN a generic DLNA player for the same speaker reports. A
+        # matching UUID lets MA's protocol linking hide that DLNA player behind this one
+        # instead of leaving both to independently control the same speaker.
+        self._attr_device_info.add_identifier(
+            IdentifierType.UUID, room.renderer_udn.removeprefix("uuid:")
+        )
 
     async def on_unload(self) -> None:
         """Handle logic when the player is unloaded from the Player controller."""
