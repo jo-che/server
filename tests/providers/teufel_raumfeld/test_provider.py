@@ -1,13 +1,16 @@
-"""Tests for the zone bookkeeping of the Teufel Raumfeld provider."""
+"""Tests for the zone bookkeeping and lifecycle of the Teufel Raumfeld provider."""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from music_assistant.helpers.webserver import Webserver
+from music_assistant.providers.teufel_raumfeld.helpers import RaumfeldNotifyServer
 from music_assistant.providers.teufel_raumfeld.provider import TeufelRaumfeldPlayerProvider
 from music_assistant.providers.teufel_raumfeld.raumfeld_client import (
     RaumfeldDevice,
@@ -220,3 +223,57 @@ async def test_get_device_model_without_location_reads_nothing() -> None:
         assert await provider.get_device_model(RENDERER, RaumfeldTopology()) is None
 
     reader.assert_not_awaited()
+
+
+def _mass_with_webserver() -> MagicMock:
+    """Return a MusicAssistant stand-in whose stream server really tracks dynamic routes."""
+    mass = MagicMock()
+    mass.streams = Webserver(logging.getLogger("test"), enable_dynamic_routes=True)
+    mass.streams.base_url = "http://10.0.0.86:8097"
+    mass.players.unregister = AsyncMock()
+    return mass
+
+
+def test_each_instance_gets_its_own_notify_route() -> None:
+    """Two instances (two Raumfeld systems) can be set up side by side."""
+    mass = _mass_with_webserver()
+
+    first = RaumfeldNotifyServer(MagicMock(), mass, "teufel_raumfeld--a")
+    second = RaumfeldNotifyServer(MagicMock(), mass, "teufel_raumfeld--b")
+
+    assert first.callback_url != second.callback_url
+
+
+async def test_unload_releases_the_notify_route() -> None:
+    """A deleted provider can be set up again without restarting MA."""
+    mass = _mass_with_webserver()
+    provider = _provider()
+    provider.mass = mass
+    provider._watch_tasks = []
+    provider.notify_server = RaumfeldNotifyServer(MagicMock(), mass, "teufel_raumfeld--a")
+
+    await provider.unload(is_removed=True)
+
+    RaumfeldNotifyServer(MagicMock(), mass, "teufel_raumfeld--a")
+
+
+async def test_failed_init_leaves_no_notify_route_behind() -> None:
+    """A host that fails during setup does not block the next setup attempt."""
+    mass = _mass_with_webserver()
+    provider = _provider()
+    provider.mass = mass
+    provider.get_setup_value = MagicMock(side_effect=["10.0.0.125", 47365])
+    client = MagicMock()
+    client.ping = AsyncMock(return_value=True)
+    client.get_topology = AsyncMock(side_effect=TimeoutError)
+
+    with (
+        patch(
+            "music_assistant.providers.teufel_raumfeld.provider.RaumfeldWebserviceClient",
+            return_value=client,
+        ),
+        pytest.raises(TimeoutError),
+    ):
+        await provider.handle_async_init()
+
+    assert mass.streams._dynamic_routes == {}

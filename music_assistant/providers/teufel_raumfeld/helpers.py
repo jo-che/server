@@ -32,23 +32,31 @@ if TYPE_CHECKING:
 class RaumfeldNotifyServer(UpnpNotifyServer):  # type: ignore[misc,unused-ignore]
     """Notify server for async_upnp_client which uses the MA webserver."""
 
-    def __init__(self, requester: UpnpRequester, mass: MusicAssistant) -> None:
+    def __init__(self, requester: UpnpRequester, mass: MusicAssistant, instance_id: str) -> None:
         """
         Initialize the notify server and register it on MA's shared webserver.
 
+        Call `close()` when done, the route stays registered until then.
+
         :param requester: async_upnp_client requester used for the event subscriptions.
         :param mass: The Music Assistant instance to register the NOTIFY route on.
+        :param instance_id: The provider instance, so each instance gets its own route.
         """
         self.mass = mass
         self.event_handler = UpnpEventHandler(self, requester)
-        self.mass.streams.register_dynamic_route(
-            "/teufel_raumfeld_notify", self._handle_request, method="NOTIFY"
+        self._path = f"/teufel_raumfeld_notify/{instance_id}"
+        self._unregister_route = self.mass.streams.register_dynamic_route(
+            self._path, self._handle_request, method="NOTIFY"
         )
 
     @property
     def callback_url(self) -> str:
         """Return callback URL on which we are callable."""
-        return f"{self.mass.streams.base_url}/teufel_raumfeld_notify"
+        return f"{self.mass.streams.base_url}{self._path}"
+
+    def close(self) -> None:
+        """Unregister the NOTIFY route from MA's shared webserver."""
+        self._unregister_route()
 
     async def _handle_request(self, request: Request) -> Response:
         """Handle incoming NOTIFY requests from a subscribed device."""

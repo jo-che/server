@@ -80,8 +80,10 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
             raise SetupFailedError(f"Unable to reach a Raumfeld host webservice at {host}:{port}")
         self.requester = AiohttpSessionRequester(self.mass.http_session, with_sleep=True)
         self.upnp_factory = UpnpFactory(self.requester, non_strict=True)
-        self.notify_server = RaumfeldNotifyServer(self.requester, self.mass)
         self.topology = await self.client.get_topology()
+        # registered last: unload() only runs for a provider whose init completed, so a
+        # failure in any step above must not leave the notify route behind
+        self.notify_server = RaumfeldNotifyServer(self.requester, self.mass, self.instance_id)
 
     async def loaded_in_mass(self) -> None:
         """Call after the provider has been loaded."""
@@ -102,6 +104,7 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
         for player in list(self._players.values()):
             await self.mass.players.unregister(player.player_id)
         self._players.clear()
+        self.notify_server.close()
 
     async def discover_players(self) -> None:
         """Register a player for every currently known Raumfeld room."""
