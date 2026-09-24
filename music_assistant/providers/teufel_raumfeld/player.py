@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from contextlib import suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlparse
 
 from async_upnp_client.exceptions import UpnpError, UpnpResponseError
 from async_upnp_client.profiles.dlna import DmrDevice, TransportState
@@ -222,6 +223,11 @@ class TeufelRaumfeldPlayer(Player):
         self._attr_device_info.add_identifier(
             IdentifierType.UUID, room.renderer_udn.removeprefix("uuid:")
         )
+        # Other protocols on the same speaker (e.g. the Chromecast support of some
+        # models) can't know any Raumfeld UDN. MA resolves the speaker's MAC address
+        # from this IP on registration, which then matches theirs.
+        if location := topology.location_for(room.renderer_udn):
+            self._attr_device_info.ip_address = urlparse(location).hostname
 
     async def on_unload(self) -> None:
         """Handle logic when the player is unloaded from the Player controller."""
