@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from async_upnp_client.exceptions import UpnpError
+from async_upnp_client.profiles.dlna import TransportState
 from music_assistant_models.enums import PlaybackState
 from music_assistant_models.errors import PlayerUnavailableError
 
@@ -23,6 +26,7 @@ ROOM = "uuid:Room-Living"
 OTHER_ROOM = "uuid:Room-Kitchen"
 ZONE_A = "uuid:Zone-A"
 ZONE_B = "uuid:Zone-B"
+MA_BASE_URL = "http://10.0.0.86:8097"
 
 DMR_DEVICE = "music_assistant.providers.teufel_raumfeld.player.DmrDevice"
 
@@ -244,3 +248,53 @@ async def test_poll_of_an_awake_room_without_renderer_is_unavailable(
 
     with pytest.raises(PlayerUnavailableError):
         await player.poll()
+
+
+def _reporting_device(state: TransportState, reported_at: datetime) -> MagicMock:
+    """
+    Return a mocked renderer that reports position 0:00 as of the given time.
+
+    :param state: The transport state the renderer reports.
+    :param reported_at: When the renderer last stamped its position.
+    """
+    device = _dmr_device()
+    device.transport_state = state
+    device.current_track_uri = f"{MA_BASE_URL}/flow/session/queue/item/room.flac"
+    device.media_title = device.media_artist = device.media_album_name = None
+    device.media_image_url = None
+    device.media_duration = None
+    device.media_position = 0
+    device.media_position_updated_at = reported_at
+    return device
+
+
+def test_position_from_before_a_resume_is_not_extrapolated() -> None:
+    """
+    A resume anchors the position to when playback restarted, not to its stale stamp.
+
+    Mirrors a live recording: after pause (stop) and resume the renderer reported 0:00,
+    stamped at the stop, until audio actually restarted seconds later.
+    """
+    stopped_at = datetime.now(UTC) - timedelta(seconds=9)
+    player = _player()
+    player.device = _reporting_device(TransportState.STOPPED, stopped_at)
+    player._sync_from_device()
+
+    player.device.transport_state = TransportState.PLAYING
+    resumed = time.time()
+    player._sync_from_device()
+
+    assert player._attr_elapsed_time == 0
+    assert player._attr_elapsed_time_last_updated is not None
+    assert player._attr_elapsed_time_last_updated >= resumed
+
+
+def test_position_of_a_room_found_playing_keeps_its_own_stamp() -> None:
+    """A room that was already playing when first seen has no resume to anchor to."""
+    reported_at = datetime.now(UTC) - timedelta(seconds=5)
+    player = _player()
+    player.device = _reporting_device(TransportState.PLAYING, reported_at)
+
+    player._sync_from_device()
+
+    assert player._attr_elapsed_time_last_updated == reported_at.timestamp()

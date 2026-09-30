@@ -70,6 +70,10 @@ class TeufelRaumfeldPlayer(Player):
         self._last_play_url: str | None = None
         self.lock = asyncio.Lock()
         self.force_poll = False
+        # the playback state the device itself last reported, apart from the optimistic
+        # one play_media sets, to tell when playback actually (re)started
+        self._observed_playback_state: PlaybackState | None = None
+        self._playing_since: float | None = None
         self.last_seen = time.time()
         self._attr_name = name
         self._attr_device_info = DeviceInfo(model="Raumfeld", manufacturer=DEVICE_MANUFACTURER)
@@ -467,7 +471,13 @@ class TeufelRaumfeldPlayer(Player):
         """Copy the connected UPnP device's current state onto this player's attributes."""
         if self.device is None:
             return
-        self._attr_playback_state = self._get_playback_state()
+        playback_state = self._get_playback_state()
+        if playback_state != PlaybackState.PLAYING:
+            self._playing_since = None
+        elif self._observed_playback_state not in (None, PlaybackState.PLAYING):
+            self._playing_since = time.time()
+        self._observed_playback_state = playback_state
+        self._attr_playback_state = playback_state
         media_duration = self.device.media_duration
         self.set_current_media(
             uri=self.device.current_track_uri or "",
@@ -481,7 +491,14 @@ class TeufelRaumfeldPlayer(Player):
         if (media_position := self.device.media_position) is not None:
             self._attr_elapsed_time = float(media_position)
             if (updated_at := self.device.media_position_updated_at) is not None:
-                self._attr_elapsed_time_last_updated = updated_at.timestamp()
+                anchor = updated_at.timestamp()
+                if self._playing_since is not None:
+                    # a device only re-stamps a position that actually changed, so shortly
+                    # after a resume the timestamp still dates from before the pause (seen
+                    # live: 0:00 reported unchanged from the stop until audio restarted).
+                    # The position may not be extrapolated across the time it was not playing.
+                    anchor = max(anchor, self._playing_since)
+                self._attr_elapsed_time_last_updated = anchor
 
     def _get_playback_state(self) -> PlaybackState:
         """Map the connected device's UPnP transport state onto a MA PlaybackState."""
