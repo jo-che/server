@@ -290,6 +290,30 @@ def test_position_from_before_a_resume_is_not_extrapolated() -> None:
     assert player._attr_elapsed_time_last_updated >= resumed
 
 
+def test_position_does_not_run_while_the_stream_is_still_loading() -> None:
+    """
+    Playback is only counted from when audio starts, not from when loading began.
+
+    Mirrors a live recording: STOPPED, then about 1-2s TRANSITIONING at 0:00 while the
+    renderer loads the stream, then PLAYING at 0:00.
+    """
+    stopped_at = datetime.now(UTC) - timedelta(seconds=9)
+    player = _player()
+    player.device = _reporting_device(TransportState.STOPPED, stopped_at)
+    player._sync_from_device()
+
+    player.device.transport_state = TransportState.TRANSITIONING
+    loading = time.time()
+    player._sync_from_device()
+    assert player._attr_elapsed_time_last_updated is not None
+    assert player._attr_elapsed_time_last_updated >= loading
+
+    player.device.transport_state = TransportState.PLAYING
+    started = time.time()
+    player._sync_from_device()
+    assert player._attr_elapsed_time_last_updated >= started
+
+
 def test_position_of_a_room_found_playing_keeps_its_own_stamp() -> None:
     """A room that was already playing when first seen has no resume to anchor to."""
     reported_at = datetime.now(UTC) - timedelta(seconds=5)
@@ -338,6 +362,24 @@ async def test_flow_stream_is_described_as_a_continuous_stream() -> None:
     assert "audioBroadcast" in didl
     assert "First Track" not in didl
     assert "duration=" not in didl
+
+
+async def test_position_is_stamped_once_play_was_sent() -> None:
+    """The seconds it takes to load the stream do not count as time already played."""
+    provider = _provider()
+    provider.mass.streams.base_url = MA_BASE_URL
+    player = _player(provider)
+    player.device = _dmr_device()
+    player.device.async_set_transport_uri = AsyncMock()
+    player.device.async_wait_for_can_play = AsyncMock()
+    play_sent: list[float] = []
+    player.device.async_play = AsyncMock(side_effect=lambda: play_sent.append(time.time()))
+
+    await player._apply_transport_uri(_track(), f"{MA_BASE_URL}/flow/s/q/item-1/room.flac")
+
+    assert player._attr_elapsed_time == 0
+    assert player._attr_elapsed_time_last_updated is not None
+    assert player._attr_elapsed_time_last_updated >= play_sent[0]
 
 
 async def test_single_track_stream_keeps_its_track_metadata() -> None:

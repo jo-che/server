@@ -72,9 +72,9 @@ class TeufelRaumfeldPlayer(Player):
         self._last_play_url: str | None = None
         self.lock = asyncio.Lock()
         self.force_poll = False
-        # the playback state the device itself last reported, apart from the optimistic
-        # one play_media sets, to tell when playback actually (re)started
-        self._observed_playback_state: PlaybackState | None = None
+        # the transport state the device itself last reported, apart from the optimistic
+        # playback state play_media sets, to tell when playback actually (re)started
+        self._observed_transport_state: TransportState | None = None
         self._playing_since: float | None = None
         self.last_seen = time.time()
         self._attr_name = name
@@ -449,11 +449,13 @@ class TeufelRaumfeldPlayer(Player):
         title = media.title or media.uri
         self.set_current_media(uri=url, clear_all=True)
         self._attr_playback_state = PlaybackState.PLAYING
-        self._attr_elapsed_time = 0
-        self._attr_elapsed_time_last_updated = time.time()
         await self.device.async_set_transport_uri(url, title, didl_metadata)
         await self.device.async_wait_for_can_play(10)
         await self.device.async_play()
+        # stamped only now: loading the stream can take seconds, which must not count
+        # as time already played
+        self._attr_elapsed_time = 0
+        self._attr_elapsed_time_last_updated = time.time()
 
     def _handle_event(
         self, service: UpnpService, state_variables: Sequence[UpnpStateVariable[Any]]
@@ -485,13 +487,13 @@ class TeufelRaumfeldPlayer(Player):
         """Copy the connected UPnP device's current state onto this player's attributes."""
         if self.device is None:
             return
-        playback_state = self._get_playback_state()
-        if playback_state != PlaybackState.PLAYING:
+        transport_state = self.device.transport_state
+        if transport_state != TransportState.PLAYING:
             self._playing_since = None
-        elif self._observed_playback_state not in (None, PlaybackState.PLAYING):
+        elif self._observed_transport_state not in (None, TransportState.PLAYING):
             self._playing_since = time.time()
-        self._observed_playback_state = playback_state
-        self._attr_playback_state = playback_state
+        self._observed_transport_state = transport_state
+        self._attr_playback_state = self._get_playback_state()
         media_duration = self.device.media_duration
         self.set_current_media(
             uri=self.device.current_track_uri or "",
@@ -506,7 +508,11 @@ class TeufelRaumfeldPlayer(Player):
             self._attr_elapsed_time = float(media_position)
             if (updated_at := self.device.media_position_updated_at) is not None:
                 anchor = updated_at.timestamp()
-                if self._playing_since is not None:
+                if transport_state == TransportState.TRANSITIONING:
+                    # still loading the stream (seen live for up to ~2s after a resume):
+                    # counted as playing, but its position does not run yet
+                    anchor = time.time()
+                elif self._playing_since is not None:
                     # a device only re-stamps a position that actually changed, so shortly
                     # after a resume the timestamp still dates from before the pause (seen
                     # live: 0:00 reported unchanged from the stop until audio restarted).
