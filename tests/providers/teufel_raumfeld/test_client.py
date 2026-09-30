@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import patch
+
 import aiohttp
 import pytest
 from aiohttp import web
 
 from music_assistant.providers.teufel_raumfeld.raumfeld_client import (
+    RaumfeldCommandError,
+    RaumfeldConnectionError,
     RaumfeldTopology,
     RaumfeldWebserviceClient,
 )
@@ -92,7 +97,7 @@ def test_topology_resolves_addressable_udn_for_synced_and_solo_rooms() -> None:
         topology.location_for(topology.addressable_udn_for_room("uuid:Room-Living"))
         == "http://10.0.0.5:8080/desc-zone.xml"
     )
-    assert [r.udn for r in topology.rooms_in_zone("uuid:Zone-Living-Kitchen")] == [
+    assert topology.zones["uuid:Zone-Living-Kitchen"].room_udns == [
         "uuid:Room-Living",
         "uuid:Room-Kitchen",
     ]
@@ -114,12 +119,17 @@ async def _fixture_app() -> web.Application:
         connect_calls.append(dict(request.query))
         return web.Response(status=200)
 
+    async def reject_command(_request: web.Request) -> web.Response:
+        # what a real host answers for an unknown room (checked live)
+        return web.Response(status=400)
+
     app = web.Application()
     app["connect_calls"] = connect_calls
     app.router.add_get("/getZones", get_zones)
     app.router.add_get("/listDevices", list_devices)
     app.router.add_get("/getHostInfo", get_host_info)
     app.router.add_get("/connectRoomsToZone", connect_rooms_to_zone)
+    app.router.add_get("/dropRoomJob", reject_command)
     return app  # app["connect_calls"] is asserted on by the caller of this fixture
 
 
@@ -178,3 +188,66 @@ async def test_connect_rooms_to_zone_sends_expected_query_params(
             "zoneUDN": "uuid:Zone-Living-Kitchen",
         }
     ]
+
+
+async def test_rejected_command_raises(raumfeld_client: RaumfeldWebserviceClient) -> None:
+    """A command the host rejects is reported to the caller, not just logged."""
+    with pytest.raises(RaumfeldCommandError):
+        await raumfeld_client.drop_room("uuid:Room-Unknown")
+
+
+async def _client_for(aiohttp_client: object, app: web.Application) -> RaumfeldWebserviceClient:
+    """
+    Return a client wired up against the given aiohttp application.
+
+    :param aiohttp_client: The pytest-aiohttp client factory.
+    :param app: The application standing in for the host webservice.
+    """
+    test_client = await aiohttp_client(app)  # type: ignore[operator]
+    client = RaumfeldWebserviceClient(test_client.host, test_client.port, test_client.session)
+    client.base_url = str(test_client.make_url(""))
+    return client
+
+
+async def test_host_that_stops_answering_times_out(aiohttp_client: object) -> None:
+    """A hanging host fails the topology fetch instead of stalling it indefinitely."""
+
+    async def hang(_request: web.Request) -> web.Response:
+        await asyncio.sleep(10)
+        return web.Response(status=200)
+
+    app = web.Application()
+    app.router.add_get("/getZones", hang)
+    app.router.add_get("/listDevices", hang)
+    client = await _client_for(aiohttp_client, app)
+
+    with (
+        patch(
+            "music_assistant.providers.teufel_raumfeld.raumfeld_client.webservice._REQUEST_TIMEOUT",
+            0.1,
+        ),
+        pytest.raises(RaumfeldConnectionError),
+    ):
+        await client.get_topology()
+
+
+async def test_long_poll_sends_the_last_update_id_back(aiohttp_client: object) -> None:
+    """Each long-poll request carries the updateID of the previous answer."""
+    received: list[str | None] = []
+
+    async def get_zones(request: web.Request) -> web.Response:
+        received.append(request.headers.get("updateID"))
+        return web.Response(
+            body=GET_ZONES_XML, content_type="text/xml", headers={"updateID": str(len(received))}
+        )
+
+    app = web.Application()
+    app.router.add_get("/getZones", get_zones)
+    client = await _client_for(aiohttp_client, app)
+
+    polls = client.long_poll("/getZones")
+    assert await anext(polls) == GET_ZONES_XML
+    assert await anext(polls) == GET_ZONES_XML
+    await polls.aclose()
+
+    assert received == [None, "1"]

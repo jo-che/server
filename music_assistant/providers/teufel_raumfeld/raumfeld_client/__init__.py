@@ -8,21 +8,21 @@ UPnP renderer locations this client resolves; see `music_assistant.providers.teu
 from __future__ import annotations
 
 from .exceptions import (
+    RaumfeldCommandError,
     RaumfeldConnectionError,
     RaumfeldError,
     RaumfeldInvalidHostError,
-    RaumfeldNotFoundError,
 )
 from .models import RaumfeldDevice, RaumfeldRoom, RaumfeldTopology, RaumfeldZone
 from .webservice import DEFAULT_PORT, RaumfeldWebserviceClient
 
 __all__ = [
     "DEFAULT_PORT",
+    "RaumfeldCommandError",
     "RaumfeldConnectionError",
     "RaumfeldDevice",
     "RaumfeldError",
     "RaumfeldInvalidHostError",
-    "RaumfeldNotFoundError",
     "RaumfeldRoom",
     "RaumfeldTopology",
     "RaumfeldWebserviceClient",

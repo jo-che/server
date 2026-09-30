@@ -78,13 +78,6 @@ class RaumfeldTopology:
             return None
         return room.zone_udn or room.udn
 
-    def rooms_in_zone(self, zone_udn: str) -> list[RaumfeldRoom]:
-        """Return all rooms currently combined into the given zone."""
-        zone = self.zones.get(zone_udn)
-        if zone is None:
-            return []
-        return [self.rooms[udn] for udn in zone.room_udns if udn in self.rooms]
-
 
 def parse_zone_config(xml_bytes: bytes) -> tuple[dict[str, RaumfeldRoom], dict[str, RaumfeldZone]]:
     """

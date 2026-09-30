@@ -15,5 +15,5 @@ class RaumfeldInvalidHostError(RaumfeldError):
     """Raised when the configured host does not respond like a Raumfeld host webservice."""
 
 
-class RaumfeldNotFoundError(RaumfeldError):
-    """Raised when a referenced room/zone/device UDN is not (or no longer) known."""
+class RaumfeldCommandError(RaumfeldError):
+    """Raised when the host webservice rejects a command, e.g. for an unknown room or zone."""

@@ -2,12 +2,13 @@
 Async client for the Raumfeld host webservice.
 
 The Raumfeld "host" (one designated speaker on the system) exposes a small HTTP
-webservice with plain GET endpoints returning XML, plus long-polling support (a
-``Prefer: wait=<seconds>`` request header and an ``updateID`` response/request header,
-where HTTP 200 means "changed" and 304 means "unchanged") for live topology updates.
+webservice with plain GET endpoints returning XML, plus long-polling for live topology
+updates (see `RaumfeldWebserviceClient.long_poll`). Every request is first redirected to
+a session path (HTTP 307), which aiohttp follows transparently. Commands the host
+rejects, e.g. for an unknown room, are answered with HTTP 400.
 This is a clean-room implementation of that protocol shape based on publicly observable
-endpoint behavior; see the provider's ``manifest.json`` credits for the projects whose
-existing (GPLv3) implementations were read to understand the protocol.
+endpoint behavior; the projects whose existing implementations were read to understand
+the protocol are credited in the provider's ``manifest.json``.
 
 This module only speaks to the webservice. It knows nothing about UPnP/DLNA playback
 control, which happens directly against the room/zone UPnP renderer devices whose
@@ -18,11 +19,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 import aiohttp
 
-from .exceptions import RaumfeldConnectionError, RaumfeldInvalidHostError
+from .exceptions import RaumfeldCommandError, RaumfeldConnectionError, RaumfeldInvalidHostError
 from .models import RaumfeldTopology, parse_devices, parse_zone_config
 
 LOGGER = logging.getLogger(__name__)
@@ -30,6 +31,9 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_PORT = 47365
 
 _VALIDATION_TIMEOUT = 3
+# topology fetches run while the provider holds its reconcile lock, so a host that stops
+# answering must not stall grouping for the session's (much longer) default timeout
+_REQUEST_TIMEOUT = 10
 _LONG_POLL_WAIT_SECONDS = 300
 _LONG_POLL_TOTAL_TIMEOUT = 330
 _LONG_POLL_ERROR_BACKOFF = 15
@@ -66,8 +70,8 @@ class RaumfeldWebserviceClient:
             zones_xml, devices_xml = await asyncio.gather(
                 self._get_bytes("/getZones"), self._get_bytes("/listDevices")
             )
-        except aiohttp.ClientError as err:
-            raise RaumfeldConnectionError(str(err)) from err
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise RaumfeldConnectionError(repr(err)) from err
         rooms, zones = parse_zone_config(zones_xml)
         devices = parse_devices(devices_xml)
         return RaumfeldTopology(rooms=rooms, zones=zones, devices=devices)
@@ -102,10 +106,6 @@ class RaumfeldWebserviceClient:
         """Drop a room from whatever zone it is currently in."""
         await self._get("/dropRoomJob", params={"roomUDN": room_udn})
 
-    async def enter_automatic_standby(self, room_udn: str) -> None:
-        """Put a room into automatic standby."""
-        await self._get("/enterAutomaticStandby", params={"roomUDN": room_udn})
-
     async def enter_manual_standby(self, room_udn: str) -> None:
         """Put a room into manual standby."""
         await self._get("/enterManualStandby", params={"roomUDN": room_udn})
@@ -114,13 +114,19 @@ class RaumfeldWebserviceClient:
         """Wake a room from standby."""
         await self._get("/leaveStandby", params={"roomUDN": room_udn})
 
-    async def long_poll(self, path: str) -> AsyncIterator[bytes]:
+    async def long_poll(self, path: str) -> AsyncGenerator[bytes]:
         """
         Yield the response body of `path` every time the webservice reports a change.
 
-        Runs forever until the surrounding task is cancelled. A request timeout (no
-        change within the requested wait window) is treated as "keep waiting", not an
-        error; only actual connection failures back off before retrying.
+        The first request returns the current state at once, with an ``updateID``
+        header; sending that ID back makes the host hold the request until something
+        changes. Runs forever until the surrounding task is cancelled.
+
+        Observed live, the host ignores the ``Prefer: wait`` header (still sent in case
+        other firmware honors it) and holds a request for as long as nothing changes -
+        well over 6 minutes, never answering 304 - so this client's own request timeout
+        is what ends a quiet period; it is treated as "keep waiting", not as an error.
+        Only actual connection failures back off before retrying.
 
         :param path: Webservice path to long-poll, e.g. "/getZones".
         """
@@ -144,7 +150,7 @@ class RaumfeldWebserviceClient:
                         )
                         await asyncio.sleep(_LONG_POLL_ERROR_BACKOFF)
             except TimeoutError:
-                # normal: nothing changed within the requested wait window
+                # normal: nothing changed while the request was held (see docstring)
                 continue
             except aiohttp.ClientError as err:
                 LOGGER.debug("Long-poll of %s failed: %r", path, err)
@@ -154,15 +160,18 @@ class RaumfeldWebserviceClient:
         return f"{self.base_url}{path}"
 
     async def _get(self, path: str, params: dict[str, str] | None = None) -> None:
+        timeout = aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT)
         try:
-            async with self.session.get(self._url(path), params=params) as resp:
-                if resp.status >= 400:
-                    LOGGER.warning("Request to %s failed with status %s", path, resp.status)
-        except aiohttp.ClientError as err:
-            raise RaumfeldConnectionError(str(err)) from err
+            async with self.session.get(self._url(path), params=params, timeout=timeout) as resp:
+                status = resp.status
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise RaumfeldConnectionError(repr(err)) from err
+        if status >= 400:
+            raise RaumfeldCommandError(f"{path} {params} was rejected with status {status}")
 
     async def _get_bytes(self, path: str) -> bytes:
-        async with self.session.get(self._url(path)) as resp:
+        timeout = aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT)
+        async with self.session.get(self._url(path), timeout=timeout) as resp:
             if resp.status != 200:
                 raise RaumfeldInvalidHostError(f"Unexpected status {resp.status} from {path}")
             return await resp.read()

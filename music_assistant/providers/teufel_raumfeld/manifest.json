@@ -6,7 +6,10 @@
   "description": "Control Teufel Raumfeld multiroom speakers, with native zone grouping and independent per-room volume.",
   "codeowners": ["@jo-che"],
   "credits": [
-    "[Asyncio UPnP Client library by Steven Looman](https://github.com/StevenLooman/async_upnp_client)"
+    "[Asyncio UPnP Client library by Steven Looman](https://github.com/StevenLooman/async_upnp_client)",
+    "[node-raumkernel by ChriD](https://github.com/ChriD/node-raumkernel)",
+    "[teufel_raumfeld Home Assistant integration](https://github.com/B5r1oJ0A9G/teufel_raumfeld)",
+    "[hassfeld](https://github.com/B5r1oJ0A9G/hassfeld)"
   ],
   "requirements": ["async-upnp-client==0.48.0", "defusedxml==0.7.1"],
   "documentation": "https://music-assistant.io/player-support/teufel-raumfeld/",
