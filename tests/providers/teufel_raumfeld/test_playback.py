@@ -10,8 +10,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from async_upnp_client.exceptions import UpnpError
 from async_upnp_client.profiles.dlna import TransportState
-from music_assistant_models.enums import PlaybackState
+from music_assistant_models.enums import MediaType, PlaybackState
 from music_assistant_models.errors import PlayerUnavailableError
+from music_assistant_models.player import PlayerMedia
 
 from music_assistant.providers.teufel_raumfeld.player import TeufelRaumfeldPlayer
 from music_assistant.providers.teufel_raumfeld.raumfeld_client import (
@@ -298,3 +299,49 @@ def test_position_of_a_room_found_playing_keeps_its_own_stamp() -> None:
     player._sync_from_device()
 
     assert player._attr_elapsed_time_last_updated == reported_at.timestamp()
+
+
+def _track() -> PlayerMedia:
+    """Return the first track of a queue, the way MA hands it to the player."""
+    return PlayerMedia(
+        uri="library://track/1",
+        media_type=MediaType.TRACK,
+        title="First Track",
+        duration=237,
+        queue_item_id="item-1",
+    )
+
+
+async def _set_transport_uri(url: str) -> str:
+    """
+    Start the first track at the given stream URL and return the metadata sent along.
+
+    :param url: The stream URL MA resolved for the track.
+    """
+    provider = _provider()
+    provider.mass.streams.base_url = MA_BASE_URL
+    player = _player(provider)
+    player.device = _dmr_device()
+    player.device.async_set_transport_uri = AsyncMock()
+    player.device.async_wait_for_can_play = AsyncMock()
+    player.device.async_play = AsyncMock()
+
+    await player._apply_transport_uri(_track(), url)
+
+    return str(player.device.async_set_transport_uri.call_args.args[2])
+
+
+async def test_flow_stream_is_described_as_a_continuous_stream() -> None:
+    """A flow stream is not described as its first track, which would expire in the app."""
+    didl = await _set_transport_uri(f"{MA_BASE_URL}/flow/session/queue/item-1/room.flac")
+
+    assert "audioBroadcast" in didl
+    assert "First Track" not in didl
+    assert "duration=" not in didl
+
+
+async def test_single_track_stream_keeps_its_track_metadata() -> None:
+    """A stream of a single track is still described as that track."""
+    didl = await _set_transport_uri(f"{MA_BASE_URL}/single/session/queue/item-1/room.flac")
+
+    assert "First Track" in didl

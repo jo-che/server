@@ -6,6 +6,7 @@ import asyncio
 import time
 from collections.abc import Sequence
 from contextlib import suppress
+from dataclasses import replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
@@ -14,6 +15,7 @@ from async_upnp_client.exceptions import UpnpError, UpnpResponseError
 from async_upnp_client.profiles.dlna import DmrDevice, TransportState
 from music_assistant_models.enums import (
     IdentifierType,
+    MediaType,
     PlaybackState,
     PlayerFeature,
     PlayerType,
@@ -431,6 +433,18 @@ class TeufelRaumfeldPlayer(Player):
         :param url: The (already resolved) stream URL to play.
         """
         assert self.device is not None  # for type checking; guaranteed by both callers
+        if url.startswith(f"{self.mass.streams.base_url}/flow/"):
+            # MA decides on flow mode while resolving the URL, so `media` still describes
+            # just the first track. Handing the renderer that track's duration makes the
+            # Teufel app count it down and then get stuck while the stream plays on, so
+            # the stream is described as the continuous (duration-less) stream it is.
+            media = replace(
+                media,
+                media_type=MediaType.FLOW_STREAM,
+                title="Music Assistant",
+                image_url=None,
+                duration=None,
+            )
         didl_metadata = create_didl_metadata(media, url)
         title = media.title or media.uri
         self.set_current_media(uri=url, clear_all=True)
