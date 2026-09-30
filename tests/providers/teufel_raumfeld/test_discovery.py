@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from zeroconf import ServiceStateChange
 
 from music_assistant.providers.teufel_raumfeld.const import CONF_HOST, CONF_PORT
@@ -18,6 +19,7 @@ from music_assistant.providers.teufel_raumfeld.setup_flow import (
     CONF_DISCOVERED_HOST,
     MANUAL_ENTRY,
     _addresses_of,
+    _claimed_identities,
     _hosts_to_offer,
     run_setup,
 )
@@ -156,11 +158,13 @@ async def _offered(
     async def addresses_of(configured: str) -> set[str]:
         return {configured.lower()} | (resolved or set())
 
+    mass = _mass(configured_hosts)
     with (
         patch(f"{SETUP_FLOW}.discover_hosts", AsyncMock(return_value=[ONE_S, CONNECTOR])),
         patch(f"{SETUP_FLOW}._addresses_of", side_effect=addresses_of),
     ):
-        return await _hosts_to_offer(_mass(configured_hosts), own_instance_id)
+        claimed = await _claimed_identities(mass, own_instance_id)
+        return await _hosts_to_offer(mass, claimed)
 
 
 async def test_hosts_to_offer_offers_every_new_host() -> None:
@@ -235,17 +239,27 @@ def _shown(session: MagicMock, step_id: str) -> list[ConfigEntry]:
     raise AssertionError(f"no {step_id} form was shown")
 
 
-async def _run_setup(session: MagicMock, offered: list[DiscoveredHost]) -> MagicMock:
+async def _run_setup(
+    session: MagicMock, offered: list[DiscoveredHost], claimed: set[str] | None = None
+) -> MagicMock:
     """
     Run the setup flow with the given hosts offered and a reachable host webservice.
 
     :param session: The setup session stand-in.
     :param offered: The discovered hosts to offer.
+    :param claimed: What the hosts of already set up instances can be recognized by.
     """
     client = MagicMock()
     client.ping = AsyncMock(return_value=True)
+
+    async def addresses_of(host: str) -> set[str]:
+        # "one-s.fritz.box" stands for a hostname of the One S host
+        return {host.lower()} | ({"10.0.0.125"} if host == "one-s.fritz.box" else set())
+
     with (
+        patch(f"{SETUP_FLOW}._claimed_identities", AsyncMock(return_value=claimed or set())),
         patch(f"{SETUP_FLOW}._hosts_to_offer", AsyncMock(return_value=offered)),
+        patch(f"{SETUP_FLOW}._addresses_of", side_effect=addresses_of),
         patch(f"{SETUP_FLOW}.RaumfeldWebserviceClient", return_value=client) as client_class,
     ):
         await run_setup(session)
@@ -294,3 +308,16 @@ async def test_setup_accepts_a_hostname() -> None:
     client_class.assert_called_once_with("one-s.fritz.box", 47365, session.mass.http_session)
     session.finish.assert_awaited_once()
     assert session.finish.call_args.args[0][CONF_HOST] == "one-s.fritz.box"
+
+
+@pytest.mark.parametrize("entered", ["10.0.0.125", "one-s.fritz.box"])
+async def test_setup_rejects_a_host_that_is_already_set_up(entered: str) -> None:
+    """A host another instance controls cannot be added again, however it is entered."""
+    session = _session(
+        {CONF_HOST: entered, CONF_PORT: 47365}, {CONF_HOST: "10.0.0.27", CONF_PORT: 47365}
+    )
+
+    await _run_setup(session, [], claimed={"10.0.0.125"})
+
+    assert session.form.call_args_list[1].kwargs["errors"] == {CONF_HOST: "already_configured"}
+    assert session.finish.call_args.args[0][CONF_HOST] == "10.0.0.27"

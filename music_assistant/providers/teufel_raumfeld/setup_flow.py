@@ -52,9 +52,8 @@ async def run_setup(session: SetupSession) -> None:
     """Run the setup flow: collect the host webservice's host/port and validate it."""
     errors: dict[str, str] | None = None
     setup_data = dict(session.context.setup_data)
-    if CONF_HOST not in setup_data and (
-        hosts := await _hosts_to_offer(session.mass, session.context.instance_id)
-    ):
+    claimed = await _claimed_identities(session.mass, session.context.instance_id)
+    if CONF_HOST not in setup_data and (hosts := await _hosts_to_offer(session.mass, claimed)):
         host = hosts[0] if len(hosts) == 1 else await _select_host(session, hosts)
         if host is not None:
             setup_data[CONF_HOST] = host.address
@@ -68,6 +67,9 @@ async def run_setup(session: SetupSession) -> None:
         host_name = cast("str", submitted[CONF_HOST]).strip()
         setup_data[CONF_HOST] = host_name
         port = cast("int", submitted[CONF_PORT])
+        if await _addresses_of(host_name) & claimed:
+            errors = {CONF_HOST: "already_configured"}
+            continue
         client = RaumfeldWebserviceClient(host_name, port, session.mass.http_session)
         if not await client.ping():
             errors = {"base": "cannot_connect"}
@@ -100,25 +102,18 @@ async def _select_host(session: SetupSession, hosts: list[DiscoveredHost]) -> Di
     return next((host for host in hosts if host.address == selected), None)
 
 
-async def _hosts_to_offer(
-    mass: MusicAssistant, own_instance_id: str | None
-) -> list[DiscoveredHost]:
+async def _hosts_to_offer(mass: MusicAssistant, claimed: set[str]) -> list[DiscoveredHost]:
     """
     Return the discovered hosts no other instance of this provider is set up for yet.
 
     :param mass: The MusicAssistant instance.
-    :param own_instance_id: The instance being (re)configured, excluded from the check.
+    :param claimed: What the hosts of other instances can be recognized by
+        (see `_claimed_identities`).
     """
     hosts = await discover_hosts(mass.discovery.aiozc.zeroconf, _DISCOVERY_TIMEOUT)
     if not hosts:
         LOGGER.debug("No Raumfeld host discovered")
         return []
-    claimed: set[str] = set()
-    for instance_id, conf in mass.config.get("providers", {}).items():
-        if conf.get("domain") != DOMAIN or instance_id == own_instance_id:
-            continue
-        if configured := mass.config.get_provider_setup_value(instance_id, CONF_HOST):
-            claimed |= await _addresses_of(str(configured))
     offered = [host for host in hosts if not _identities(host) & claimed]
     LOGGER.debug(
         "Discovered Raumfeld hosts %s, offering %s",
@@ -126,6 +121,22 @@ async def _hosts_to_offer(
         [host.address for host in offered],
     )
     return offered
+
+
+async def _claimed_identities(mass: MusicAssistant, own_instance_id: str | None) -> set[str]:
+    """
+    Return every form the hosts of other instances of this provider can be recognized by.
+
+    :param mass: The MusicAssistant instance.
+    :param own_instance_id: The instance being (re)configured, excluded from the result.
+    """
+    claimed: set[str] = set()
+    for instance_id, conf in mass.config.get("providers", {}).items():
+        if conf.get("domain") != DOMAIN or instance_id == own_instance_id:
+            continue
+        if configured := mass.config.get_provider_setup_value(instance_id, CONF_HOST):
+            claimed |= await _addresses_of(str(configured))
+    return claimed
 
 
 async def _addresses_of(configured_host: str) -> set[str]:

@@ -25,5 +25,9 @@
       "title": "Connect to your Raumfeld system",
       "description": "Enter how to reach your Raumfeld host."
     }
+  },
+  "errors": {
+    "cannot_connect": "Could not reach a Raumfeld host at this address. Check the hostname or IP address and the port, and that the host speaker is switched on.",
+    "already_configured": "This Raumfeld system is already set up in Music Assistant. Each system can only be added once - enter the host of a different Raumfeld system, or reconfigure the existing one instead."
   }
 }

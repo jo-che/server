@@ -2594,6 +2594,8 @@
   "provider.teufel_raumfeld.config_entries.host.label": "Host",
   "provider.teufel_raumfeld.config_entries.port.description": "The port of the Raumfeld host webservice. Leave at the default unless you know it was changed.",
   "provider.teufel_raumfeld.config_entries.port.label": "Port",
+  "provider.teufel_raumfeld.errors.already_configured": "This Raumfeld system is already set up in Music Assistant. Each system can only be added once - enter the host of a different Raumfeld system, or reconfigure the existing one instead.",
+  "provider.teufel_raumfeld.errors.cannot_connect": "Could not reach a Raumfeld host at this address. Check the hostname or IP address and the port, and that the host speaker is switched on.",
   "provider.teufel_raumfeld.setup_flow.select_host.description": "More than one Raumfeld host was found on your network.",
   "provider.teufel_raumfeld.setup_flow.select_host.title": "Choose a Raumfeld system",
   "provider.teufel_raumfeld.setup_flow.user.description": "Enter how to reach your Raumfeld host.",
