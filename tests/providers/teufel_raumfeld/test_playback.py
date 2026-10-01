@@ -116,11 +116,40 @@ async def test_connect_to_the_same_location_is_a_no_op() -> None:
     provider.upnp_factory.async_create_device.assert_awaited_once()
 
 
-async def test_connect_resumes_playback_after_a_zone_swap() -> None:
-    """A zone change while playing resumes the same media on the new zone renderer."""
-    player = _player()
+async def test_zone_swap_resumes_the_queue_at_its_current_position() -> None:
+    """
+    A zone change while a queue plays resumes it through MA, not with the old stream URL.
+
+    MA's stream server takes a repeated request for a flow URL as a reconnect and restarts
+    the current track from its beginning; a queue resume starts at the current position.
+    """
+    provider = _provider()
+    provider.mass.create_task = MagicMock()
+    provider.mass.player_queues.resume = MagicMock(return_value="resume-coroutine")
+    player = _player(provider)
     player._apply_transport_uri = AsyncMock()  # type: ignore[method-assign]
-    media = MagicMock()
+    media = MagicMock(source_id="queue-1")
+
+    with patch(DMR_DEVICE, side_effect=[_dmr_device(), _dmr_device()]):
+        await player.connect(_topology(ZONE_A))
+        player._attr_playback_state = PlaybackState.PLAYING
+        player._last_play_media = media
+        player._last_play_url = "http://ma/flow/stream"
+        await player.connect(_topology(ZONE_B))
+
+    provider.mass.player_queues.resume.assert_called_once_with("queue-1")
+    provider.mass.create_task.assert_called_once_with("resume-coroutine")
+    player._apply_transport_uri.assert_not_awaited()
+    assert provider.is_zone_confirmed(ZONE_B)
+
+
+async def test_zone_swap_replays_media_without_a_queue() -> None:
+    """Media that does not come from a queue is started again on the new zone directly."""
+    provider = _provider()
+    provider.mass.player_queues.get = MagicMock(return_value=None)
+    player = _player(provider)
+    player._apply_transport_uri = AsyncMock()  # type: ignore[method-assign]
+    media = MagicMock(source_id=None)
 
     with patch(DMR_DEVICE, side_effect=[_dmr_device(), _dmr_device()]):
         await player.connect(_topology(ZONE_A))
@@ -130,6 +159,22 @@ async def test_connect_resumes_playback_after_a_zone_swap() -> None:
         await player.connect(_topology(ZONE_B))
 
     player._apply_transport_uri.assert_awaited_once_with(media, "http://ma/stream")
+
+
+async def test_play_media_without_a_reachable_zone_raises() -> None:
+    """A room that cannot be connected reports the failure instead of silently not playing."""
+    provider = _provider()
+    provider.upnp_factory.async_create_device = AsyncMock(side_effect=UpnpError("gone"))
+    provider.client.get_topology = AsyncMock(return_value=_topology(ZONE_A))
+    provider.confirm_zone(ZONE_A)
+    provider.mass.streams.resolve_stream_url = AsyncMock(return_value="http://ma/stream")
+    player = _player(provider)
+
+    with (
+        patch("music_assistant.providers.teufel_raumfeld.player.asyncio.sleep"),
+        pytest.raises(PlayerUnavailableError),
+    ):
+        await player.play_media(MagicMock())
 
 
 async def test_connect_does_not_resume_after_an_explicit_stop() -> None:

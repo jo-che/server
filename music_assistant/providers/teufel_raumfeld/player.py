@@ -46,8 +46,9 @@ class TeufelRaumfeldPlayer(Player):
 
     Rooms are the stable unit of identity: a room's player_id (its Raumfeld room UDN)
     never changes, but the UPnP device it actually controls does - it points at the
-    room's own virtual renderer while unsynced, and at the shared zone renderer while
-    combined with other rooms into a zone. `connect()` keeps that pointer current.
+    renderer of whatever zone the room is currently part of (a zone of its own when it
+    plays alone, see `_ensure_real_solo_zone`), or at the room's own silent renderer
+    while it is not part of any zone. `connect()` keeps that pointer current.
     """
 
     _attr_type = PlayerType.PLAYER
@@ -114,8 +115,8 @@ class TeufelRaumfeldPlayer(Player):
         no reason, which is exactly what silently stopped playback on the remaining room
         before this was split out.
 
-        A device swap while this room was actively playing resumes the same media on the
-        new device before returning. This is not just for grouping/ungrouping (which
+        A device swap while this room was actively playing resumes playback on the new
+        device. This is not just for grouping/ungrouping (which
         `set_members`/`ungroup` already try to make a no-op for whoever keeps playing, by
         targeting the existing zone - see `apply_zone_change`): confirmed live, Raumfeld
         can reassign a freshly (re)formed zone's UDN again on its own, on the order of a
@@ -179,7 +180,20 @@ class TeufelRaumfeldPlayer(Player):
                 assert self._last_play_media is not None  # for type checking
                 assert self._last_play_url is not None
                 self.logger.debug("Resuming playback on %s after a zone change", self.display_name)
-                await self._apply_transport_uri(self._last_play_media, self._last_play_url)
+                queue_id = self._last_play_media.source_id
+                if queue_id and self.mass.player_queues.get(queue_id):
+                    # Re-sending the old URL would make MA's stream server take it as a
+                    # reconnect and restart the current track from its beginning (and
+                    # put MA's flow position tracking out of step); resuming the queue
+                    # starts a fresh stream at the current position instead. A zone
+                    # Raumfeld itself moved this playing room into is a real one, so it
+                    # is not replaced again (see _ensure_real_solo_zone). Run as a task:
+                    # the resume reaches play_media, which needs self.lock held here.
+                    if addressable_udn in topology.zones:
+                        self._prov.confirm_zone(addressable_udn)
+                    self.mass.create_task(self.mass.player_queues.resume(queue_id))
+                else:
+                    await self._apply_transport_uri(self._last_play_media, self._last_play_url)
 
     async def refresh_from_topology(self, topology: RaumfeldTopology) -> None:
         """
@@ -328,7 +342,9 @@ class TeufelRaumfeldPlayer(Player):
         # connect()'s docstring for why that can otherwise silently orphan playback.
         async with self.lock:
             if self.device is None:
-                return
+                raise PlayerUnavailableError(
+                    f"{self.display_name} has no reachable Raumfeld zone to play on"
+                )
             if self.device.can_stop:
                 await self.device.async_stop()
             await self._apply_transport_uri(media, url)
@@ -594,8 +610,8 @@ class TeufelRaumfeldPlayer(Player):
         # wait, rather than trusting the first snapshot, is what actually avoids it.
         #
         # Tried replacing this with an event-driven wait (settle once the provider's own
-        # long-poll watcher observes a quiet period, see `wait_for_next_topology_update`)
-        # since there's no Raumfeld API to synchronously wait for a zone to stop changing
+        # long-poll watcher observes a quiet period - since removed again) since
+        # there's no Raumfeld API to synchronously wait for a zone to stop changing
         # - node-raumkernel doesn't have one either, it's built around reacting to this
         # same kind of change notification, not a step ahead of it. That took noticeably
         # longer in practice (waiting for a bounded quiet period rather than a flat 1.5s)
