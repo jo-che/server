@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<devices>
+ <device udn='uuid:00000000-0000-4000-8000-000000000015' type='urn:schemas-raumfeld-com:device:RaumfeldDevice:1' location='http://192.0.2.46:53575/00000000-0000-4000-8000-000000000015.xml'>Teufel Raumfeld Device</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000012' type='urn:schemas-upnp-org:device:MediaRenderer:1' location='http://192.0.2.125:60156/00000000-0000-4000-8000-000000000012.xml'>Speaker Kitchen</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000016' type='urn:schemas-raumfeld-com:device:RaumfeldDevice:1' location='http://192.0.2.125:49621/00000000-0000-4000-8000-000000000016.xml'>Teufel Raumfeld Device</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000001' type='urn:schemas-upnp-org:device:MediaRenderer:1' location='http://192.0.2.125:55382/00000000-0000-4000-8000-000000000001.xml'>Living Room</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000017' type='urn:schemas-raumfeld-com:device:RaumfeldDevice:1' location='http://192.0.2.79:53491/00000000-0000-4000-8000-000000000017.xml'>Teufel Raumfeld Device</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000014' type='urn:schemas-upnp-org:device:MediaRenderer:1' location='http://192.0.2.46:60270/00000000-0000-4000-8000-000000000014.xml'>Speaker Bedroom #2</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000009' type='urn:schemas-upnp-org:device:MediaRenderer:1' location='http://192.0.2.37:49803/00000000-0000-4000-8000-000000000009.xml'>Speaker Office</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000004' type='urn:schemas-upnp-org:device:MediaRenderer:1' location='http://192.0.2.125:50301/00000000-0000-4000-8000-000000000004.xml'>Workshop</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000006' type='urn:schemas-upnp-org:device:MediaRenderer:1' location='http://192.0.2.79:54371/00000000-0000-4000-8000-000000000006.xml'>Speaker Workshop</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000007' type='urn:schemas-upnp-org:device:MediaRenderer:1' location='http://192.0.2.125:54703/00000000-0000-4000-8000-000000000007.xml'>Office</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000003' type='urn:schemas-upnp-org:device:MediaRenderer:1' location='http://192.0.2.27:53119/00000000-0000-4000-8000-000000000003.xml'>Connector Living Room</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000018' type='urn:schemas-raumfeld-com:device:RaumfeldDevice:1' location='http://192.0.2.27:50814/00000000-0000-4000-8000-000000000018.xml'>Teufel Raumfeld Device</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000019' type='urn:schemas-upnp-org:device:MediaServer:1' location='http://192.0.2.125:54161/00000000-0000-4000-8000-000000000019.xml'>Raumfeld MediaServer</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000020' type='urn:schemas-raumfeld-com:device:RaumfeldDevice:1' location='http://192.0.2.37:53113/00000000-0000-4000-8000-000000000020.xml'>Teufel Raumfeld Device</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000021' type='urn:schemas-raumfeld-com:device:ConfigDevice:1' location='http://192.0.2.125:60991/00000000-0000-4000-8000-000000000021.xml'>Raumfeld ConfigDevice</device>
+ <device udn='uuid:00000000-0000-4000-8000-000000000010' type='urn:schemas-upnp-org:device:MediaRenderer:1' location='http://192.0.2.125:50876/00000000-0000-4000-8000-000000000010.xml'>Kitchen</device>
+</devices>

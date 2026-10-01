@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import patch
 
 import aiohttp
@@ -251,3 +252,42 @@ async def test_long_poll_sends_the_last_update_id_back(aiohttp_client: object) -
     await polls.aclose()
 
     assert received == [None, "1"]
+
+
+# Captured from a real 5-room system (room names, UDNs and addresses anonymized). Unlike the
+# hand-written XML above, it carries what real firmware sends: renderer names, extra
+# attributes, a speaker without standby (no powerState) and a room in no zone at all.
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _real_topology() -> RaumfeldTopology:
+    """Return the topology of the captured real system."""
+    rooms, zones = parse_zone_config((FIXTURES / "get_zones.xml").read_bytes())
+    devices = parse_devices((FIXTURES / "list_devices.xml").read_bytes())
+    return RaumfeldTopology(rooms=rooms, zones=zones, devices=devices)
+
+
+def test_real_system_rooms_are_parsed() -> None:
+    """Every room of a real system is found, with what real firmware does and leaves out."""
+    topology = _real_topology()
+    rooms = {room.name: room for room in topology.rooms.values()}
+
+    assert set(rooms) == {"Living Room", "Workshop", "Office", "Kitchen", "Bedroom"}
+    # a first-generation One M has no standby, so its room reports no power state at all
+    assert rooms["Workshop"].power_state is None
+    assert rooms["Kitchen"].power_state == "AUTOMATIC_STANDBY"
+    # a room outside any zone
+    assert rooms["Bedroom"].zone_udn is None
+    assert rooms["Workshop"].renderer_udn == "uuid:00000000-0000-4000-8000-000000000006"
+
+
+def test_real_system_zone_rooms_resolve_their_renderer() -> None:
+    """Each room in a zone resolves the zone renderer to control it by."""
+    topology = _real_topology()
+
+    for room in topology.rooms.values():
+        if room.zone_udn is None:
+            continue
+        location = topology.location_for(topology.addressable_udn_for_room(room.udn))
+        assert location is not None
+        assert location.startswith("http://192.0.2.125:")  # zone renderers run on the host

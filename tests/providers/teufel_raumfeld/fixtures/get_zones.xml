@@ -1,0 +1,30 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<zoneConfig numRooms='5' spotifyMode='singleRoom'>
+ <zones>
+  <zone udn='uuid:00000000-0000-4000-8000-000000000001'>
+   <room name='Living Room' udn='uuid:00000000-0000-4000-8000-000000000002' powerState='AUTOMATIC_STANDBY'>
+    <renderer udn='uuid:00000000-0000-4000-8000-000000000003' name='Connector Living Room'></renderer>
+   </room>
+  </zone>
+  <zone udn='uuid:00000000-0000-4000-8000-000000000004'>
+   <room name='Workshop' udn='uuid:00000000-0000-4000-8000-000000000005'>
+    <renderer udn='uuid:00000000-0000-4000-8000-000000000006' name='Speaker Workshop'></renderer>
+   </room>
+  </zone>
+  <zone udn='uuid:00000000-0000-4000-8000-000000000007'>
+   <room name='Office' udn='uuid:00000000-0000-4000-8000-000000000008' powerState='AUTOMATIC_STANDBY'>
+    <renderer udn='uuid:00000000-0000-4000-8000-000000000009' name='Speaker Office'></renderer>
+   </room>
+  </zone>
+  <zone udn='uuid:00000000-0000-4000-8000-000000000010'>
+   <room name='Kitchen' udn='uuid:00000000-0000-4000-8000-000000000011' powerState='AUTOMATIC_STANDBY'>
+    <renderer udn='uuid:00000000-0000-4000-8000-000000000012' name='Speaker Kitchen'></renderer>
+   </room>
+  </zone>
+ </zones>
+ <unassignedRooms>
+  <room name='Bedroom' udn='uuid:00000000-0000-4000-8000-000000000013' powerState='AUTOMATIC_STANDBY'>
+   <renderer udn='uuid:00000000-0000-4000-8000-000000000014' name='Speaker Bedroom #2'></renderer>
+  </room>
+ </unassignedRooms>
+</zoneConfig>

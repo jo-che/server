@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +22,9 @@ from music_assistant.providers.teufel_raumfeld.raumfeld_client import (
     RaumfeldZone,
 )
 from tests.common import MockProvider
+
+if TYPE_CHECKING:
+    from async_upnp_client.profiles.dlna import DmrDevice
 
 ROOM = "uuid:Room-Living"
 OTHER_ROOM = "uuid:Room-Kitchen"
@@ -432,3 +435,150 @@ async def test_single_track_stream_keeps_its_track_metadata() -> None:
     didl = await _set_transport_uri(f"{MA_BASE_URL}/single/session/queue/item-1/room.flac")
 
     assert "First Track" in didl
+
+
+PLAYER = "music_assistant.providers.teufel_raumfeld.player"
+
+
+async def test_play_media_stops_then_starts_the_stream_on_the_zone() -> None:
+    """Playing connects to the room's zone, stops what plays there and starts the stream."""
+    provider = _provider()
+    provider.client.get_topology = AsyncMock(return_value=_topology(ZONE_A))
+    provider.confirm_zone(ZONE_A)
+    provider.mass.streams.resolve_stream_url = AsyncMock(return_value="http://ma/stream")
+    player = _player(provider)
+    player._apply_transport_uri = AsyncMock()  # type: ignore[method-assign]
+    device = _dmr_device()
+    order: list[str] = []
+    device.async_stop = AsyncMock(side_effect=lambda: order.append("stop"))
+    player._apply_transport_uri.side_effect = lambda *_: order.append("start")
+    media = _track()
+
+    with (
+        patch(DMR_DEVICE, return_value=device),
+        patch.object(TeufelRaumfeldPlayer, "update_state") as update_state,
+    ):
+        await player.play_media(media)
+
+    assert order == ["stop", "start"]
+    player._apply_transport_uri.assert_awaited_once_with(media, "http://ma/stream")
+    assert player._last_play_media is media
+    assert player._last_play_url == "http://ma/stream"
+    update_state.assert_called_once()
+
+
+async def test_volume_and_mute_target_this_room_within_its_zone() -> None:
+    """Volume and mute go to this room through the zone, not to the whole zone."""
+    player = _player()
+    player.device = _dmr_device()
+
+    with (
+        patch(f"{PLAYER}.set_room_volume", AsyncMock()) as set_volume,
+        patch(f"{PLAYER}.set_room_mute", AsyncMock()) as set_mute,
+        patch.object(TeufelRaumfeldPlayer, "update_state"),
+    ):
+        await player.volume_set(30)
+        await player.volume_mute(True)
+
+    set_volume.assert_awaited_once_with(player.device.device, ROOM, 30)
+    set_mute.assert_awaited_once_with(player.device.device, ROOM, True)
+    assert player._attr_volume_level == 30
+    assert player._attr_volume_muted is True
+
+
+async def test_poll_reads_state_and_this_rooms_volume() -> None:
+    """A poll refreshes the renderer's state and this room's own volume and mute."""
+    player = _player()
+    player.device = _reporting_device(TransportState.PLAYING, datetime.now(UTC))
+    player.device.async_update = AsyncMock()
+
+    with (
+        patch(f"{PLAYER}.get_room_volume", AsyncMock(return_value=35)),
+        patch(f"{PLAYER}.get_room_mute", AsyncMock(return_value=False)),
+        patch.object(TeufelRaumfeldPlayer, "update_state") as update_state,
+    ):
+        await player.poll()
+
+    player.device.async_update.assert_awaited_once()
+    assert player._attr_playback_state == PlaybackState.PLAYING
+    assert player._attr_volume_level == 35
+    assert player._attr_volume_muted is False
+    update_state.assert_called_once()
+
+
+async def test_poll_of_a_vanished_renderer_reports_unavailable() -> None:
+    """A renderer that stops answering is dropped and the player reported unavailable."""
+    player = _player()
+    device = _dmr_device()
+    device.async_update = AsyncMock(side_effect=UpnpError("gone"))
+    player.device = device
+
+    with pytest.raises(PlayerUnavailableError):
+        await player.poll()
+
+    assert cast("DmrDevice | None", player.device) is None
+    device.async_unsubscribe_services.assert_awaited_once()
+
+
+def _event(service_id: str, name: str, value: Any) -> tuple[MagicMock, list[MagicMock]]:
+    """
+    Return a UPnP event of one changed state variable.
+
+    :param service_id: The id of the service the event comes from.
+    :param name: The name of the changed state variable.
+    :param value: Its new value.
+    """
+    service = MagicMock(service_id=service_id)
+    variable = MagicMock(value=value)
+    variable.name = name
+    return service, [variable]
+
+
+@pytest.mark.parametrize("state", [TransportState.PLAYING, TransportState.PAUSED_PLAYBACK])
+def test_playing_or_paused_event_triggers_a_poll(state: TransportState) -> None:
+    """Starting or pausing is followed by a full poll, for position and track info."""
+    provider = _provider()
+    provider.mass.create_task = MagicMock()
+    player = _player(provider)
+
+    player._handle_event(*_event("urn:upnp-org:serviceId:AVTransport", "TransportState", state))
+
+    assert player.force_poll is True
+    provider.mass.create_task.assert_called_once()
+
+
+def test_other_event_updates_without_a_poll() -> None:
+    """Other changes are taken over from the event itself."""
+    provider = _provider()
+    provider.mass.create_task = MagicMock()
+    player = _player(provider)
+
+    player._handle_event(*_event("urn:upnp-org:serviceId:RenderingControl", "Volume", 30))
+
+    assert player.force_poll is False
+    provider.mass.create_task.assert_called_once()
+
+
+@pytest.mark.parametrize("force_poll", [True, False])
+async def test_update_after_event_polls_only_when_asked(force_poll: bool) -> None:
+    """After an event, a poll runs only if the event asked for one."""
+    player = _player()
+    player.force_poll = force_poll
+    player.poll = AsyncMock()  # type: ignore[method-assign]
+
+    with patch.object(TeufelRaumfeldPlayer, "update_state") as update_state:
+        await player._async_update_after_event()
+
+    assert player.poll.await_count == (1 if force_poll else 0)
+    assert update_state.call_count == (0 if force_poll else 1)
+
+
+async def test_room_gone_from_the_topology_becomes_unavailable() -> None:
+    """A room the host no longer knows is reported unavailable."""
+    player = _player()
+
+    with patch.object(TeufelRaumfeldPlayer, "update_state") as update_state:
+        await player.refresh_from_topology(RaumfeldTopology())
+
+    assert player._attr_available is False
+    update_state.assert_called_once()
