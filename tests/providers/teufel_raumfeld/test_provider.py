@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,6 +14,7 @@ from music_assistant.helpers.webserver import Webserver
 from music_assistant.providers.teufel_raumfeld.helpers import RaumfeldNotifyServer
 from music_assistant.providers.teufel_raumfeld.provider import TeufelRaumfeldPlayerProvider
 from music_assistant.providers.teufel_raumfeld.raumfeld_client import (
+    RaumfeldConnectionError,
     RaumfeldDevice,
     RaumfeldRoom,
     RaumfeldTopology,
@@ -24,6 +26,7 @@ KITCHEN = "uuid:Room-Kitchen"
 BEDROOM = "uuid:Room-Bedroom"
 ZONE = "uuid:Zone-Living-Kitchen"
 RENDERER = "uuid:Renderer-Living"
+PROVIDER = "music_assistant.providers.teufel_raumfeld.provider"
 
 
 def _provider() -> Any:
@@ -277,3 +280,98 @@ async def test_failed_init_leaves_no_notify_route_behind() -> None:
         await provider.handle_async_init()
 
     assert mass.streams._dynamic_routes == {}
+
+
+def _discovering_provider(disabled: set[str]) -> Any:
+    """
+    Return a provider whose discover_players() is real, with some rooms disabled in MA.
+
+    :param disabled: UDNs of the rooms whose player is disabled in MA's config.
+    """
+    provider = _provider()
+    del provider.discover_players  # use the real method instead of the stand-in
+    provider.topology = _topology(synced=False)
+    provider.mass.players.register_or_update = AsyncMock()
+    provider.mass.config.get.side_effect = lambda key, *_default: key.split("/")[1] not in disabled
+    return provider
+
+
+def _player_class() -> MagicMock:
+    """Return a stand-in for the player class, creating a fresh player per room."""
+
+    def create(_provider: Any, room_udn: str, _name: str) -> MagicMock:
+        player = _player()
+        player.player_id = room_udn
+        player.update_room_info = AsyncMock()
+        player.connect = AsyncMock()
+        return player
+
+    return MagicMock(side_effect=create)
+
+
+async def test_disabled_rooms_get_no_player() -> None:
+    """A room disabled in MA is neither registered nor connected to."""
+    provider = _discovering_provider(disabled={KITCHEN})
+
+    with patch(f"{PROVIDER}.TeufelRaumfeldPlayer", _player_class()):
+        await provider.discover_players()
+
+    assert set(provider._players) == {LIVING, BEDROOM}
+
+
+async def test_room_comes_back_after_being_enabled_again() -> None:
+    """Disabling forgets the room, so discovery after enabling it registers it afresh."""
+    provider = _discovering_provider(disabled=set())
+    with patch(f"{PROVIDER}.TeufelRaumfeldPlayer", _player_class()):
+        await provider.discover_players()
+        provider.on_player_disabled(KITCHEN)
+        assert KITCHEN not in provider._players
+
+        await provider.discover_players()
+
+    assert KITCHEN in provider._players
+    registered = [
+        call.args[0].player_id for call in provider.mass.players.register_or_update.await_args_list
+    ]
+    assert registered.count(KITCHEN) == 2
+
+
+async def test_disabled_room_is_not_listed_as_group_member() -> None:
+    """A zone member without an MA player is left out of the MA group."""
+    provider = _provider()
+    provider._players = {KITCHEN: _player(), BEDROOM: _player()}  # living room disabled
+    provider.topology = _topology(synced=True)
+
+    await provider._reconcile()
+
+    # kitchen would lead (lowest UDN) a group naming the disabled living room
+    assert provider._players[KITCHEN]._attr_group_members == []
+
+
+async def test_watcher_logs_a_failing_reconcile_once_and_backs_off() -> None:
+    """A reconcile that keeps failing is logged loudly once, and retried ever later."""
+    provider = _provider()
+    provider.logger = MagicMock()
+
+    async def changes(_path: str) -> AsyncIterator[bytes]:
+        yield b"<zoneConfig/>"
+
+    provider.client.long_poll = changes
+    provider._settle_and_reconcile = AsyncMock(side_effect=RaumfeldConnectionError("timeout"))
+    delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+        if len(delays) == 3:
+            raise asyncio.CancelledError
+
+    with (
+        patch(f"{PROVIDER}.asyncio.sleep", record_sleep),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await provider._watch_topology("/getZones")
+
+    assert delays == [5, 10, 15]
+    provider.logger.warning.assert_called_once()
+    provider.logger.exception.assert_not_called()
+    assert provider.logger.debug.call_count == 2

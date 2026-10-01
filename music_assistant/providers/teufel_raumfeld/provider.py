@@ -10,20 +10,24 @@ from async_upnp_client.aiohttp import AiohttpSessionRequester
 from async_upnp_client.client_factory import UpnpFactory
 from music_assistant_models.errors import SetupFailedError
 
+from music_assistant.constants import CONF_PLAYERS
 from music_assistant.helpers.json import SerializableType
 from music_assistant.models.player_provider import PlayerProvider
 
 from .const import CONF_HOST, CONF_PORT
 from .helpers import RaumfeldNotifyServer, get_device_model
 from .player import TeufelRaumfeldPlayer
-from .raumfeld_client import RaumfeldTopology, RaumfeldWebserviceClient
+from .raumfeld_client import RaumfeldError, RaumfeldTopology, RaumfeldWebserviceClient
 
 # a zone change can be reflected in /getZones slightly before the corresponding
-# device's location shows up in /listDevices - refresh_topology() retries within this
-# budget so it does not hand back (and reconcile against) a room transiently missing
-# its device location right after a command that itself just changed the zone it's in.
+# device's location shows up in /listDevices - _settle_and_reconcile() retries within this
+# budget so it does not reconcile against a room transiently missing its device location
+# right after a command that itself just changed the zone it's in.
 _TOPOLOGY_SETTLE_ATTEMPTS = 6
 _TOPOLOGY_SETTLE_DELAY = 0.4
+# a watcher whose reconcile keeps failing backs off by this much more per failure in a row
+_WATCH_RETRY_STEP = 5
+_WATCH_RETRY_MAX = 60
 
 if TYPE_CHECKING:
     from async_upnp_client.client import UpnpRequester
@@ -87,7 +91,8 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
 
     async def loaded_in_mass(self) -> None:
         """Call after the provider has been loaded."""
-        await self.discover_players()
+        # the players themselves are created by discover_players(), which MA calls right
+        # after this; the watchers then keep them in line with the topology
         self._watch_tasks = [
             self.mass.create_task(self._watch_topology("/getZones")),
             self.mass.create_task(self._watch_topology("/listDevices")),
@@ -107,9 +112,13 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
         self.notify_server.close()
 
     async def discover_players(self) -> None:
-        """Register a player for every currently known Raumfeld room."""
+        """Register a player for every currently known Raumfeld room that is not disabled."""
         for room_udn, room in self.topology.rooms.items():
             if room_udn in self._players:
+                continue
+            if not self.mass.config.get(f"{CONF_PLAYERS}/{room_udn}/enabled", True):
+                # MA would not register it anyway; keeping it out of _players also keeps
+                # reconciling from connecting to (and subscribing to) its zone
                 continue
             player = TeufelRaumfeldPlayer(self, room_udn, room.name)
             self._players[room_udn] = player
@@ -117,10 +126,15 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
             await player.connect(self.topology)
             await self.mass.players.register_or_update(player)
 
-    async def refresh_topology(self) -> None:
-        """Re-fetch the topology and reconcile players against it (see `_settle_and_reconcile`)."""
-        async with self._reconcile_lock:
-            await self._settle_and_reconcile()
+    def on_player_disabled(self, player_id: str) -> None:
+        """
+        Call (by config manager) when a player gets disabled.
+
+        The room is forgotten so it is created afresh by discover_players() once it is
+        enabled again (which triggers discovery), instead of being skipped as known.
+        """
+        self._players.pop(player_id, None)
+        super().on_player_disabled(player_id)
 
     async def apply_zone_change(
         self,
@@ -208,16 +222,28 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
 
     async def _watch_topology(self, path: str) -> None:
         """Long-poll a topology endpoint forever, reconciling players on every change."""
+        # An unreachable host never gets here: long_poll() itself retries quietly. Failures
+        # here come from reconciling, and since a restarted long-poll answers at once, a
+        # persistent one would repeat right away - so only the first of a row is logged
+        # loudly, and each retry waits longer.
+        failures = 0
         while True:
             try:
                 async for _xml in self.client.long_poll(path):
                     async with self._reconcile_lock:
                         await self._settle_and_reconcile()
+                    failures = 0
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                self.logger.exception("Error while watching %s, retrying shortly", path)
-                await asyncio.sleep(5)
+            except Exception as err:
+                failures += 1
+                if failures > 1:
+                    self.logger.debug("Still failing to reconcile after %s changed: %r", path, err)
+                elif isinstance(err, RaumfeldError):
+                    self.logger.warning("Failed to reconcile after %s changed: %s", path, err)
+                else:
+                    self.logger.exception("Error while reconciling after %s changed", path)
+                await asyncio.sleep(min(_WATCH_RETRY_STEP * failures, _WATCH_RETRY_MAX))
 
     async def _settle_and_reconcile(self, prefer_leader: str | None = None) -> None:
         """
@@ -226,9 +252,9 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
         Must be called with `_reconcile_lock` held. Retries briefly (see
         `_TOPOLOGY_SETTLE_ATTEMPTS`) until every currently known room resolves a device
         location, to ride out the brief lag `/listDevices` can have right after a zone
-        change this same call chain (usually `group_rooms`/`drop_rooms`) just made.
+        change this same call chain (usually `apply_zone_change`) just made.
 
-        :param prefer_leader: See `group_rooms`.
+        :param prefer_leader: See `apply_zone_change`.
         """
         topology = self.topology
         for attempt in range(_TOPOLOGY_SETTLE_ATTEMPTS):
@@ -249,7 +275,7 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
 
         Must be called with `_reconcile_lock` held.
 
-        :param prefer_leader: See `group_rooms`.
+        :param prefer_leader: See `apply_zone_change`.
         """
         await self.discover_players()
         for zone_udn, known_zone in self.topology.zones.items():
@@ -262,7 +288,8 @@ class TeufelRaumfeldPlayerProvider(PlayerProvider):
                 del self._players[room_udn]
                 continue
             zone = self.topology.zones.get(room.zone_udn) if room.zone_udn else None
-            zone_room_udns = zone.room_udns if zone else []
+            # disabled rooms still play in their zone, but have no MA player to group with
+            zone_room_udns = [udn for udn in zone.room_udns if udn in self._players] if zone else []
             if len(zone_room_udns) > 1:
                 leader_udn = self._pick_leader(zone_room_udns, prefer=prefer_leader)
                 if room_udn == leader_udn:
